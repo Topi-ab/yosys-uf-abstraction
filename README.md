@@ -20,6 +20,22 @@ Typical uses:
   checks every output beat against the same function of the output beat index, without a
   reference model or a scoreboard queue.
 
+## Quick start (prebuilt image, no build)
+
+```bash
+git clone https://github.com/Topi-ab/yosys-uf-abstraction.git    # no --recurse-submodules needed
+cd yosys-uf-abstraction
+export TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction:v0.1.0      # complete toolchain, about 470 MB
+docker pull "$TC_IMAGE"
+./tc.sh yosys -V                                # check the toolchain
+./tc.sh pytest smoke tests/builtin_cells        # a few seconds
+./tc.sh pytest -n auto                          # default suite: about 1060 tests, ~20 min on 4 cores
+```
+
+`tc.sh` runs a command in the image as the calling user with the current directory mounted,
+so run it from the repository root. See [Running the tests with the prebuilt
+image](#running-the-tests-with-the-prebuilt-image-no-local-build) for which image to choose.
+
 ## What is included
 
 | component | branch | change |
@@ -396,12 +412,10 @@ to 32 bits, while the non-UF model grows about 5x per 2 bits of width from 16 bi
 
 ## Building and running
 
-```bash
-git clone --recurse-submodules https://github.com/Topi-ab/yosys-uf-abstraction.git
-```
-
-The submodules are needed only to build the toolchain. To run the tests with a prebuilt
-image, a plain clone is enough (see below).
+To run the tools and the tests, a plain clone and a prebuilt image are enough (see
+[Quick start](#quick-start-prebuilt-image-no-build)): `--recurse-submodules` can be left out
+when you only use the prebuilt image. The submodules are needed only to build the toolchain
+yourself (see [Building with Docker](#building-with-docker)).
 
 ### Docker image
 
@@ -449,35 +463,39 @@ workflows publish:
   `:v0.1.0`) or `:latest`. It contains the same toolchain as the CI toolchain image of the
   tagged commit. Both packages are public; no login is needed to pull them.
 
-`tc.sh` and `sby.sh` run the tools in the local image `yosys-uf/toolchain:latest`, so the
-pulled image is tagged with that name:
+Which image to use: for a release tag (or `latest`), use the release image of that version;
+for a checkout of `main` (or a pull request of this repository), use the CI toolchain image of
+its hash. Both are about 470 MB. `tc.sh` and `sby.sh` use the image named by `TC_IMAGE`
+(default: the locally built `yosys-uf/toolchain:latest`), so nothing is retagged:
 
 ```bash
-git clone https://github.com/Topi-ab/yosys-uf-abstraction.git   # submodules not needed
+git clone https://github.com/Topi-ab/yosys-uf-abstraction.git   # no --recurse-submodules needed
 cd yosys-uf-abstraction
-IMG=ghcr.io/topi-ab/yosys-uf-abstraction-toolchain:$(scripts/toolchain-hash.sh)
-# or: IMG=ghcr.io/topi-ab/yosys-uf-abstraction:v0.1.0
-docker pull "$IMG"
-docker tag "$IMG" yosys-uf/toolchain:latest
-./tc.sh yosys -V                    # check the toolchain
-./tc.sh pytest -n auto              # the default test suite
-./tc.sh pytest -m slow -n auto      # runs of minutes (non-UF reference runs)
+export TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction-toolchain:$(scripts/toolchain-hash.sh)
+# or, for a release: export TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction:v0.1.0
+docker pull "$TC_IMAGE"
+./tc.sh yosys -V                       # check the toolchain
+./tc.sh pytest smoke tests/builtin_cells   # a few seconds
+./tc.sh pytest -n auto                 # default suite: about 1060 tests, ~20 min on 4 cores
+./tc.sh pytest -m slow -n auto         # runs of minutes (non-UF reference runs)
 ./tc.sh pytest -m validation -n auto   # heavy proofs and larger parameter grids
 ```
 
 `tc.sh` runs the given command in that image as the calling user (`-u $(id -u):$(id -g)`,
 `HOME=/tmp`), with the current directory mounted at `/work`, so run it from the repository
-root; files written by the tests belong to you. The `docker tag` replaces a locally built
-`yosys-uf/toolchain:latest`; `./build.sh image` (after a local build) restores it. A CI
-toolchain image exists for every toolchain hash that CI has built, that is, for commits on
-`main` and pull requests from this repository; for other checkouts use the release image.
+root; files written by the tests belong to you. A CI toolchain image exists for every
+toolchain hash that CI has built, that is, for commits on `main` and pull requests from this
+repository; for other checkouts use the release image.
 
 ### Building with Docker
 
 Everything is built and run inside Docker; nothing is installed on the host. The images pin
-compilers and libraries, so results are reproducible.
+compilers and libraries, so results are reproducible. Building needs the submodules:
 
 ```bash
+git clone --recurse-submodules https://github.com/Topi-ab/yosys-uf-abstraction.git
+# (leave out --recurse-submodules if you only use the prebuilt image)
+# or, in an existing clone: git submodule update --init --recursive
 ./build.sh                 # build all tools and the runtime image (takes a while)
 ./build.sh yosys           # rebuild one component: yosys|ghdl|ghdl-plugin|yices|z3|bitwuzla|sby
 ./build.sh shell           # interactive shell in the builder container
