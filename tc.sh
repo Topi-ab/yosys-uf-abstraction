@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run any toolchain binary inside the runtime image, cwd mounted at /work.
 # TC_IMAGE selects the image (default: the locally built yosys-uf/toolchain:latest), e.g.
-#   TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction:v0.1.0 ./tc.sh yosys -V
+#   TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction:v0.1.1 ./tc.sh yosys -V
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")" && pwd)
 TTY=(); [ -t 0 ] && [ -t 1 ] && TTY=(-it)

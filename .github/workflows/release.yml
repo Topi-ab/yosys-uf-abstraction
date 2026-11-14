@@ -31,6 +31,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Check that the README refers to this release
+        # The quick start pulls the image of the release; a tag must not ship a README that
+        # points to another version.
+        if: github.ref_type == 'tag'
+        run: |
+          grep -q "TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction:${GITHUB_REF_NAME} " README.md || {
+            echo "README.md quick start does not refer to ${GITHUB_REF_NAME}"; exit 1; }
+
       - name: Image names and tags
         id: meta
         run: |

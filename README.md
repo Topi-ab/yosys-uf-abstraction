@@ -25,7 +25,7 @@ Typical uses:
 ```bash
 git clone https://github.com/Topi-ab/yosys-uf-abstraction.git    # no --recurse-submodules needed
 cd yosys-uf-abstraction
-export TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction:v0.1.0      # complete toolchain, about 470 MB
+export TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction:v0.1.1      # complete toolchain, about 470 MB
 docker pull "$TC_IMAGE"
 ./tc.sh yosys -V                                # check the toolchain
 ./tc.sh pytest smoke tests/builtin_cells        # a few seconds
@@ -420,7 +420,7 @@ yourself (see [Building with Docker](#building-with-docker)).
 ### Docker image
 
 A prebuilt image with the complete toolchain is published on the GitHub Container Registry
-for every version tag `v*` (`release` workflow): `:<version>` (for example `:v0.1.0`), and
+for every version tag `v*` (`release` workflow): `:<version>` (for example `:v0.1.1`), and
 `:latest` for tags without a pre-release suffix. Once the package is public, no login is needed:
 
 ```bash
@@ -460,7 +460,7 @@ workflows publish:
   and tested for that commit. The script reads the submodule commits from the git index, so
   it works without initialising the submodules;
 - the **release image** `ghcr.io/topi-ab/yosys-uf-abstraction:<version>` (for example
-  `:v0.1.0`) or `:latest`. It contains the same toolchain as the CI toolchain image of the
+  `:v0.1.1`) or `:latest`. It contains the same toolchain as the CI toolchain image of the
   tagged commit. Both packages are public; no login is needed to pull them.
 
 Which image to use: for a release tag (or `latest`), use the release image of that version;
@@ -472,7 +472,7 @@ its hash. Both are about 470 MB. `tc.sh` and `sby.sh` use the image named by `TC
 git clone https://github.com/Topi-ab/yosys-uf-abstraction.git   # no --recurse-submodules needed
 cd yosys-uf-abstraction
 export TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction-toolchain:$(scripts/toolchain-hash.sh)
-# or, for a release: export TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction:v0.1.0
+# or, for a release: export TC_IMAGE=ghcr.io/topi-ab/yosys-uf-abstraction:v0.1.1
 docker pull "$TC_IMAGE"
 ./tc.sh yosys -V                       # check the toolchain
 ./tc.sh pytest smoke tests/builtin_cells   # a few seconds
