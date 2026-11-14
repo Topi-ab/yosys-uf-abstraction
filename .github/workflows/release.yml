@@ -1,0 +1,118 @@
+name: release
+
+# Publishes the toolchain image (GHDL, ghdl-yosys-plugin, Yosys, SymbiYosys, Yices, Z3,
+# Bitwuzla) as ghcr.io/<owner>/<repo>:<tag> (and :latest for release tags without a
+# pre-release suffix). The image is the CI toolchain image of the tagged commit
+# (ghcr.io/<owner>/<repo>-toolchain:<toolchain hash>), so a release does not rebuild
+# anything that CI has already built and tested. Triggered by a version tag (v*).
+#
+# The package is private after its first push. Make it public once in the repository's
+# Packages -> Package settings -> Change visibility; after that anyone can pull without
+# logging in.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Image names and tags
+        id: meta
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "toolchain=$repo-toolchain:$(scripts/toolchain-hash.sh)" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version="$GITHUB_REF_NAME"; else version="sha-${GITHUB_SHA::12}"; fi
+          tags="$repo:$version"
+          # 'latest' only for release tags without a pre-release suffix (v1.2.3, not v1.2.3-rc1).
+          if [[ "$GITHUB_REF_TYPE" = tag && "$version" != *-* ]]; then tags="$tags $repo:latest"; fi
+          components=$(git ls-files -s ext/ghdl ext/ghdl-yosys-plugin ext/yosys ext/sby ext/yices2 ext/z3 ext/bitwuzla \
+                       | awk '{sub("^ext/","",$4); printf "%s%s=%s", sep, $4, substr($2,1,12); sep=","}')
+          {
+            echo "image=$repo"
+            echo "version=$version"
+            echo "tags=$tags"
+            echo "components=$components"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the toolchain image built and tested by CI
+        id: pull
+        env:
+          TOOLCHAIN: ${{ steps.meta.outputs.toolchain }}
+        run: |
+          if docker pull "$TOOLCHAIN"; then
+            docker tag "$TOOLCHAIN" yosys-uf/toolchain:latest
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No CI image for this toolchain hash; building the toolchain."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the submodules that are built
+        if: steps.pull.outputs.found != 'true'
+        run: |
+          git submodule update --init --depth 1 --jobs 4 \
+            ext/ghdl ext/ghdl-yosys-plugin ext/sby ext/yices2 ext/yosys ext/z3 ext/bitwuzla
+          git -C ext/yosys submodule update --init --recursive --depth 1 --jobs 8
+
+      - name: Build toolchain and runtime image
+        if: steps.pull.outputs.found != 'true'
+        run: ./build.sh all
+
+      - name: Run tests
+        # The image is published only if the test suite passes with it.
+        timeout-minutes: 90
+        run: ./tc.sh pytest -n auto
+
+      - name: Tag and push the release image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          COMPONENTS: ${{ steps.meta.outputs.components }}
+        run: |
+          args=()
+          for t in $TAGS; do args+=(-t "$t"); done
+          echo "FROM yosys-uf/toolchain:latest" | docker build "${args[@]}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.title=Yosys/SymbiYosys toolchain with uninterpreted functions" \
+            --label "org.opencontainers.image.licenses=ISC AND MIT AND GPL-2.0-or-later AND GPL-3.0-or-later" \
+            --label "toolchain.components=${COMPONENTS}" \
+            -
+          for t in $TAGS; do docker push "$t"; done
+
+      - name: Show how to use the image
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          {
+            echo "### Published image"
+            echo
+            echo '```'
+            echo "docker pull $IMAGE:$VERSION"
+            echo "docker run --rm --user \"\$(id -u):\$(id -g)\" --mount type=bind,src=\"\$PWD\",dst=/work -w /work $IMAGE:$VERSION sby -f design.sby"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

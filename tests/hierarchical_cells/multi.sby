@@ -1,0 +1,26 @@
+[tasks]
+pass            ok   bv
+fail            bad  bv
+pass_stbv       ok   stbv
+fail_stbv       bad  stbv
+pass_stdt       ok   stdt
+fail_stdt       bad  stdt
+
+[options]
+mode bmc
+depth 3
+
+[engines]
+bv:   smtbmc bitwuzla
+stbv: smtbmc --stbv yices
+# z3 without unroll
+stdt: smtbmc --stdt z3
+
+[script]
+ok:  read_verilog -formal -sv multi.sv
+bad: read_verilog -formal -sv -DBAD multi.sv
+prep -top top
+select -assert-count 2 top/a:uf_instance=g
+
+[files]
+multi.sv

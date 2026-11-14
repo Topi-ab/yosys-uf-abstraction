@@ -1,0 +1,13 @@
+ext/_build/
+ext/_ccache/
+ext/_install/
+*.il
+# Hand-written RTLIL test input, not a generated file.
+!tests/hierarchical_cells/zero_width.il
+*.log
+tests/*/dsp*/
+tests/*/*_bmc/
+tests/*/*_prove/
+smoke/counter*/
+__pycache__/
+.pytest_cache/

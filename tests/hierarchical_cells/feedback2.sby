@@ -1,0 +1,31 @@
+[tasks]
+sub
+deep
+wrap
+sub_bad
+sub_yices
+sub_z3
+
+[options]
+mode bmc
+depth 3
+
+[engines]
+sub:       smtbmc bitwuzla
+sub_bad:   smtbmc bitwuzla
+deep:      smtbmc bitwuzla
+wrap:      smtbmc bitwuzla
+sub_yices: smtbmc yices
+sub_z3:    smtbmc z3
+
+[script]
+sub:       read_verilog -formal -sv feedback2.sv
+deep:      read_verilog -formal -sv -DDEEP feedback2.sv
+wrap:      read_verilog -formal -sv -DWRAP feedback2.sv
+sub_bad:   read_verilog -formal -sv -DBAD feedback2.sv
+sub_yices: read_verilog -formal -sv feedback2.sv
+sub_z3:    read_verilog -formal -sv feedback2.sv
+prep -top top
+
+[files]
+feedback2.sv

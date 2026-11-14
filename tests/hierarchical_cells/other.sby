@@ -1,0 +1,31 @@
+[tasks]
+smtlib2 src_smtlib2
+smtlib2_nomark src_smtlib2 nomark
+noexpr src_noexpr
+noexpr_nomark src_noexpr nomark
+full src_full
+full_nomark src_full nomark
+stateref src_stateref
+stateref_nomark src_stateref nomark
+smt_uf src_smt_uf
+smt_wb_uf src_smt_wb_uf
+
+[options]
+mode bmc
+depth 3
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+src_smtlib2: read_verilog -formal -sv -DSMTLIB2 other.sv
+src_noexpr: read_verilog -formal -sv -DSMT_NOEXPR other.sv
+src_full: read_verilog -formal -sv -DSMT_FULL other.sv
+src_stateref: read_verilog -formal -sv -DSMT_STATEREF other.sv
+src_smt_uf: read_verilog -formal -sv -DSMT_UF other.sv
+src_smt_wb_uf: read_verilog -formal -sv -DSMT_WB_UF other.sv
+prep -top top
+nomark: setattr -unset uf_instance top/*
+
+[files]
+other.sv

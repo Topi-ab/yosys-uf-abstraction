@@ -1,0 +1,18 @@
+[tasks]
+nouf
+uf
+uf_off
+[options]
+mode bmc
+depth 2
+[engines]
+smtbmc bitwuzla
+[script]
+read_verilog -formal comm.sv
+uf: setattr -set uf_instance "m8" t:$mul
+# $mul is created during synthesis (no source name), so the mark and its
+# switch-off are set with setattr
+uf_off: setattr -set uf_instance "m8" -set uf_disable 1 t:$mul
+prep -top comm
+[files]
+comm.sv

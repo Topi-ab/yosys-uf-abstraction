@@ -1,0 +1,112 @@
+-- Same vunit as in tests/vhdl_control_independence_setattr; the data width is
+-- the testbench generic WIDTH (the counters and j are 16 bits).
+-- Helper invariants for k-induction (prove tasks). The actual claim (a_match,
+-- symbolic index j) is in the testbench; this vunit contains only the helper
+-- invariants and their helper structures. The vunit is bound to the testbench
+-- architecture (all tasks in this directory that analyze it are prove tasks,
+-- uf_prove.sby).
+--
+-- The invariants are assertions, not assumptions: they are proven themselves
+-- (basecase + induction). A wrong invariant fails, it cannot produce a wrong
+-- PASS. The set is minimal: removing any one of them makes the induction of
+-- prove_uf fail. Induction depth k = 3: the DUT state (v1, s1, valid_out,
+-- data_out) is determined within two cycles by the inputs of the window.
+--
+-- The DUT (dsp.vhdl) stays untouched. ghdl-yosys-plugin does not support
+-- VHDL-2008 external names, so the DUT's internal state cannot be referenced
+-- from here: the shadow of v1 (vq_*) is computed from the ports.
+vunit tb_dsp_formal_inv(tb_dsp_formal(formal)) {
+    -- Shadow of the DUT's first pipeline stage (v1).
+    signal vq_a, vq_b : std_logic := '0';
+    -- A has produced beat j since reset, i.e. a_define has bound out_f(j).
+    signal def_a      : std_logic := '0';
+    -- A third DUT instance c with the input stim_f(j): its output is
+    -- mulw(stim_f(j)), the correct value of beat j. The DUT $mul is not a VHDL
+    -- object, so the term is available only through a DUT instance (with a
+    -- marked DUT entity it would come directly from the box). c is not a
+    -- checked channel, only a helper structure.
+    signal stim_j     : signed(WIDTH - 1 downto 0);
+    signal ufout_j    : signed(WIDTH - 1 downto 0);
+    signal c_res      : signed(WIDTH - 1 downto 0);
+    signal yvalid_c   : std_logic;
+    attribute uf_instance of u_stim_j : label is "stim_f";
+    attribute uf_instance of u_out_j  : label is "out_f";
+
+    u_stim_j : entity work.tb_stim_formal
+        generic map (
+            WIDTH => WIDTH
+        )
+        port map (
+            idx_in   => signed(j),
+            data_out => stim_j
+        );
+
+    u_out_j : entity work.tb_out_formal
+        generic map (
+            WIDTH => WIDTH
+        )
+        port map (
+            idx_in   => signed(j),
+            data_out => ufout_j
+        );
+
+    c : entity work.dsp
+        generic map (
+            WIDTH => WIDTH
+        )
+        port map (
+            clk_in    => clk_in,
+            rst_in    => rst_in,
+            valid_in  => valid_a_in,
+            data_in   => stim_j,
+            valid_out => yvalid_c,
+            data_out  => c_res
+        );
+
+    process (clk_in) is
+    begin
+        if rising_edge(clk_in) then
+            if rst_in = '1' then
+                vq_a  <= '0';
+                vq_b  <= '0';
+                def_a <= '0';
+            else
+                vq_a <= valid_a_in;
+                vq_b <= valid_b_in;
+                if armed = '1' and yvalid_a = '1' and ocnt_a = j then
+                    def_a <= '1';
+                end if;
+            end if;
+        end if;
+    end process;
+
+    default clock is rising_edge(clk_in);
+
+    -- Counters vs. pipeline: icnt - ocnt = number of beats in the pipeline
+    -- (vq + valid_out, 0..2). The counters are long-lived state, so without
+    -- these the DUT produces, in the initial state of the induction, a beat
+    -- whose index is not ocnt.
+    -- For A: the data of A's beat j is mulw(stim_f(j)) when def_a rises (inv_bound).
+    -- For B: the data of B's beat j is mulw(stim_f(j)) (a_match).
+    -- Note: this encodes the DUT latency (2); a latency change fails here.
+    inv_cnt_a : assert always
+        (first = '0') ->
+        (icnt_a - ocnt_a = ("00000000000000" & (vq_a and yvalid_a) & (vq_a xor yvalid_a)));
+    inv_cnt_b : assert always
+        (first = '0') ->
+        (icnt_b - ocnt_b = ("00000000000000" & (vq_b and yvalid_b) & (vq_b xor yvalid_b)));
+
+    -- Before A has produced j, B is not ahead of A and A has not passed j.
+    -- So when B produces beat j, A has produced it earlier or produces it on
+    -- the same cycle (a_define). Both parts are needed (removing either one
+    -- makes the induction fail).
+    inv_order : assert always
+        (first = '0' and def_a = '0') -> (ocnt_b <= ocnt_a and ocnt_a <= j);
+
+    -- Bound output function at one symbolic index: once A has produced j,
+    -- out_f(j) = mulw(stim_f(j)). This replaces the quantifier
+    -- "out_f is bound at all indices < ocnt_a". The output of c is current
+    -- only when yvalid_c = '1' (the pipeline drains in reset).
+    inv_bound : assert always
+        (def_a = '1' and yvalid_c = '1') -> (c_res = ufout_j);
+}

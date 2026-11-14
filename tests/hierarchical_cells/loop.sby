@@ -1,0 +1,35 @@
+[tasks]
+inst
+pass2
+deep
+inner
+cells
+noloop
+nomark
+xlevel
+deep2
+rot
+
+[options]
+mode bmc
+depth 3
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+inst:   read_verilog -formal -sv loop.sv
+pass2:  read_verilog -formal -sv -DPASS2 loop.sv
+deep:   read_verilog -formal -sv -DDEEP loop.sv
+inner:  read_verilog -formal -sv -DINNER loop.sv
+cells:  read_verilog -formal -sv -DCELLS loop.sv
+noloop: read_verilog -formal -sv -DNOLOOP loop.sv
+nomark: read_verilog -formal -sv loop.sv
+xlevel: read_verilog -formal -sv -DXLEVEL loop.sv
+deep2:  read_verilog -formal -sv -DDEEP2 loop.sv
+rot:    read_verilog -formal -sv -DROT loop.sv
+prep -top top
+nomark: setattr -unset uf_instance top/*
+
+[files]
+loop.sv

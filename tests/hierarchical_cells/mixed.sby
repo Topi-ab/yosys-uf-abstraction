@@ -1,0 +1,16 @@
+[options]
+mode bmc
+depth 2
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+read_verilog -formal -sv mixed.sv
+prep -top top
+setattr -set uf_instance "f" top/t:$neg
+setattr -set keep 1 top/t:$neg
+select -assert-count 2 top/a:uf_instance=f
+
+[files]
+mixed.sv

@@ -1,0 +1,129 @@
+-- Auxiliary invariants for k-induction (prove task). The actual data
+-- assertion (a_sb_match) is in tb_stream_scoreboard_formal; this vunit
+-- contains only the auxiliary invariants. Analyzed only in the prove task
+-- (axis_fifo.sby).
+--
+-- The invariants are assertions, not assumptions: they are proven themselves
+-- (basecase + induction), so a wrong invariant fails and cannot produce a
+-- false PASS. Everything is guarded by rst_in = '0' like the control
+-- assertions: cycle 0 is a reset (a_init_reset), and after reset the state is
+-- defined.
+--
+-- Internal state through the probes p_*: ghdl-yosys-plugin does not support
+-- VHDL-2008 external names, so the probes here are anyseq signals, and the sby
+-- script replaces their driver after flattening (connect -set p_count
+-- dut.count etc.). If a connection were missing, the probe would be free and
+-- the invariants would fail (no false PASS); the select guards in the script
+-- also check that all probes are connected.
+--
+-- Notation: D = DEPTH, occ = icnt - ocnt, m = master_ptr,
+-- dist = m - ocnt (32-bit modulo): the position of beat m within the FIFO.
+-- *_captured includes this cycle's hit (zero-delay capture), but icnt and occ
+-- count the beat only on the next cycle. The invariants therefore talk about
+-- the state before this cycle's transfers: a_pre / b_pre = *_captured on the
+-- previous cycle (a register; on the reset cycle captured = '0'). Not
+-- "captured without a hit in this cycle": after a pointer wrap (2^32 beats)
+-- m is hit again even though it was captured earlier (a real counterexample
+-- in induction).
+--   inv_range: rd < D, wr < D (excludes unused values of the pointer bits)
+--   inv_count: count = occ
+--   inv_wr:    wr = (rd + count) mod D
+--   inv_ptr:   scoreboard pointers = control checker counters
+--   inv_order: a_pre = '0' (a has not captured m) -> b_pre = '0', and m is
+--              still to come (dist >= occ, i.e. m >= icnt without a wrap)
+--   inv_inside: a_pre = '1', b_pre = '0' -> beat m is in the FIFO (dist < occ)
+--   inv_slot:  then the DUT slot (rd + dist) mod D holds mem_a
+vunit tb_axis_fifo_sb_formal_inv(tb_axis_fifo_sb_formal(formal)) {
+    -- GHDL encodes a natural range 0..N signal with the number of bits that
+    -- fits N; connect -set fails with a width error if a probe does not match.
+    function nbits(n : natural) return natural is
+        variable r : natural := 0;
+        variable v : natural := n;
+    begin
+        while v > 0 loop
+            r := r + 1;
+            v := v / 2;
+        end loop;
+        return r;
+    end function;
+    constant CW : natural := nbits(DEPTH);
+    constant PW : natural := nbits(DEPTH - 1);
+
+    attribute anyseq : boolean;
+    -- DUT
+    signal p_count      : unsigned(CW - 1 downto 0);
+    signal p_rd         : unsigned(PW - 1 downto 0);
+    signal p_wr         : unsigned(PW - 1 downto 0);
+    -- slot j as bits j*WIDTH + WIDTH-1 .. j*WIDTH
+    signal p_mem        : std_logic_vector(DEPTH * WIDTH - 1 downto 0);
+    attribute anyseq of p_count : signal is true;
+    attribute anyseq of p_rd    : signal is true;
+    attribute anyseq of p_wr    : signal is true;
+    attribute anyseq of p_mem   : signal is true;
+    -- scoreboard
+    signal p_a_ptr      : unsigned(31 downto 0);
+    signal p_b_ptr      : unsigned(31 downto 0);
+    signal p_master_ptr : unsigned(31 downto 0);
+    signal p_a_captured : std_logic;
+    signal p_b_captured : std_logic;
+    signal p_mem_a      : std_logic_vector(WIDTH - 1 downto 0);
+    attribute anyseq of p_a_ptr      : signal is true;
+    attribute anyseq of p_b_ptr      : signal is true;
+    attribute anyseq of p_master_ptr : signal is true;
+    attribute anyseq of p_a_captured : signal is true;
+    attribute anyseq of p_b_captured : signal is true;
+    attribute anyseq of p_mem_a      : signal is true;
+
+    signal occ       : unsigned(31 downto 0);
+    signal dist      : unsigned(31 downto 0);
+    signal slot_data : std_logic_vector(WIDTH - 1 downto 0);
+    signal a_pre     : std_logic;
+    signal b_pre     : std_logic;
+
+    occ  <= icnt - ocnt;
+    dist <= p_master_ptr - ocnt;
+    process (clk_in) is
+    begin
+        if rising_edge(clk_in) then
+            a_pre <= p_a_captured;
+            b_pre <= p_b_captured;
+        end if;
+    end process;
+
+    -- DUT slot (rd + dist) mod D. Used only when dist < occ <= D, in which
+    -- case dist fits in CW bits.
+    process (all) is
+        variable idx : natural;
+    begin
+        idx := to_integer(p_rd) + to_integer(dist(CW - 1 downto 0));
+        slot_data <= (others => '0');
+        for j in 0 to DEPTH - 1 loop
+            if idx = j or idx = j + DEPTH then
+                slot_data <= p_mem(j * WIDTH + WIDTH - 1 downto j * WIDTH);
+            end if;
+        end loop;
+    end process;
+
+    default clock is rising_edge(clk_in);
+
+    inv_range : assert always
+        (rst_in = '0') -> (p_rd < DEPTH and p_wr < DEPTH);
+
+    inv_count : assert always
+        (rst_in = '0') -> (resize(p_count, 32) = occ);
+
+    inv_wr : assert always
+        (rst_in = '0') -> ((to_integer(p_rd) + to_integer(p_count)) mod DEPTH = to_integer(p_wr));
+
+    inv_ptr : assert always
+        (rst_in = '0') -> (p_a_ptr = icnt and p_b_ptr = ocnt);
+
+    inv_order : assert always
+        (rst_in = '0' and a_pre = '0') -> (b_pre = '0' and dist >= occ);
+
+    inv_inside : assert always
+        (rst_in = '0' and a_pre = '1' and b_pre = '0') -> (dist < occ);
+
+    inv_slot : assert always
+        (rst_in = '0' and a_pre = '1' and b_pre = '0') -> (slot_data = p_mem_a);
+}

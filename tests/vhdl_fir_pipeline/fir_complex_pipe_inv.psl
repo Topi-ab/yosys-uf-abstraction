@@ -1,0 +1,170 @@
+-- DUT-internal auxiliary invariants (k-induction, data_prove tasks).
+--
+-- The vunit is bound to the DUT architecture (fir_complex_pipe(rtl)), so it
+-- applies to EVERY DUT instance (a and b in the data testbench) and refers to
+-- the internal signals of the DUT by their own names. The invariants are
+-- properties of the DUT itself (they hold in any environment): they do not
+-- refer to the testbench, the stimulus or the other instance. The
+-- cross-channel invariants are in the vunit tb_fir_pipe_data_formal_inv.psl.
+-- One vunit per bound entity (the ghdl plugin applies only the last of the
+-- vunits bound to the same entity); the count is checked in the sby file.
+--
+-- Ghost state: hist(0..H-1) = the H last accepted input samples (hist(0)
+-- newest), zeros after reset. The zero fill matches the definition x[m] = 0
+-- when m < 0.
+--
+-- Pipeline slots in order from newest to oldest: sk(0), mn(0), sk(1), mn(1),
+-- ..., mn(D-1) (a skid slot is always newer than the main slot of the same
+-- stage). The rank r of a slot = the number of valid slots newer than it,
+-- i.e. how many beats have been accepted after the slot's beat. The window of
+-- the slot's beat is then w(k) = hist(r + k), and the data of stage i must be
+-- the stage i value of fir_pipe_ref for this window.
+--
+-- The checks are assertions (they are proven themselves). live: reset has
+-- been seen; before it the state is uninitialised and no invariant is
+-- required.
+vunit fir_complex_pipe_inv(fir_complex_pipe(rtl)) {
+    constant H  : positive := hist_len(TAPS);
+    constant SW : positive := D * TAPS * OW;
+
+    type rank_t is array (0 to D - 1) of natural range 0 to 2 * D;
+
+    signal live    : std_logic := '0';
+    signal hist_re : smp_t(0 to H - 1);
+    signal hist_im : smp_t(0 to H - 1);
+    signal r_mn    : rank_t;
+    signal r_sk    : rank_t;
+    signal ok_mn   : std_logic_vector(0 to D - 1);
+    signal ok_sk   : std_logic_vector(0 to D - 1);
+    signal ok_dl   : std_logic;
+
+    process (clk_in) is
+    begin
+        if rising_edge(clk_in) then
+            if rst_in = '1' then
+                live    <= '1';
+                hist_re <= (others => (others => '0'));
+                hist_im <= (others => (others => '0'));
+            elsif accept = '1' then
+                hist_re <= s_re_in & hist_re(0 to H - 2);
+                hist_im <= s_im_in & hist_im(0 to H - 2);
+            end if;
+        end if;
+    end process;
+
+    -- Ranks of the slots (number of newer valid slots).
+    process (all) is
+        variable n : natural range 0 to 2 * D;
+    begin
+        n := 0;
+        for i in 0 to D - 1 loop
+            r_sk(i) <= n;
+            if sk_v(i) = '1' then
+                n := n + 1;
+            end if;
+            r_mn(i) <= n;
+            if mn_v(i) = '1' then
+                n := n + 1;
+            end if;
+        end loop;
+    end process;
+
+    ok_dl <= '1' when dl_re = hist_re(0 to TAPS - 2) and dl_im = hist_im(0 to TAPS - 2) else '0';
+
+    gen_slot : for i in 0 to D - 1 generate
+        signal wm_re, wm_im : signed(TAPS * WIDTH - 1 downto 0);
+        signal rm_re, rm_im : signed(SW - 1 downto 0);
+    begin
+        process (all) is
+        begin
+            for k in 0 to TAPS - 1 loop
+                wm_re((k + 1) * WIDTH - 1 downto k * WIDTH) <= hist_re(r_mn(i) + k);
+                wm_im((k + 1) * WIDTH - 1 downto k * WIDTH) <= hist_im(r_mn(i) + k);
+            end loop;
+        end process;
+
+        u_ref_mn : entity work.fir_pipe_ref
+            generic map (
+                TAPS  => TAPS,
+                WIDTH => WIDTH
+            )
+            port map (
+                w_re_in   => wm_re,
+                w_im_in   => wm_im,
+                st_re_out => rm_re,
+                st_im_out => rm_im
+            );
+
+        process (all) is
+            variable ok : std_logic;
+        begin
+            ok := '1';
+            for m in 0 to stage_cnt(TAPS, i) - 1 loop
+                if mn_re(i)(m) /= rm_re((i * TAPS + m + 1) * OW - 1 downto (i * TAPS + m) * OW) or
+                   mn_im(i)(m) /= rm_im((i * TAPS + m + 1) * OW - 1 downto (i * TAPS + m) * OW) then
+                    ok := '0';
+                end if;
+            end loop;
+            ok_mn(i) <= ok or not mn_v(i);
+        end process;
+
+        gen_sk : if SKID generate
+            signal ws_re, ws_im : signed(TAPS * WIDTH - 1 downto 0);
+            signal rs_re, rs_im : signed(SW - 1 downto 0);
+        begin
+            process (all) is
+            begin
+                for k in 0 to TAPS - 1 loop
+                    ws_re((k + 1) * WIDTH - 1 downto k * WIDTH) <= hist_re(r_sk(i) + k);
+                    ws_im((k + 1) * WIDTH - 1 downto k * WIDTH) <= hist_im(r_sk(i) + k);
+                end loop;
+            end process;
+
+            u_ref_sk : entity work.fir_pipe_ref
+                generic map (
+                    TAPS  => TAPS,
+                    WIDTH => WIDTH
+                )
+                port map (
+                    w_re_in   => ws_re,
+                    w_im_in   => ws_im,
+                    st_re_out => rs_re,
+                    st_im_out => rs_im
+                );
+
+            process (all) is
+                variable ok : std_logic;
+            begin
+                ok := '1';
+                for m in 0 to stage_cnt(TAPS, i) - 1 loop
+                    if sk_re(i)(m) /= rs_re((i * TAPS + m + 1) * OW - 1 downto (i * TAPS + m) * OW) or
+                       sk_im(i)(m) /= rs_im((i * TAPS + m + 1) * OW - 1 downto (i * TAPS + m) * OW) then
+                        ok := '0';
+                    end if;
+                end loop;
+                -- A skid slot is in use only when the main slot is (sk_v -> mn_v).
+                ok_sk(i) <= (ok or not sk_v(i)) and (mn_v(i) or not sk_v(i));
+            end process;
+        end generate;
+
+        gen_nsk : if not SKID generate
+            ok_sk(i) <= '1';
+        end generate;
+    end generate;
+
+    default clock is rising_edge(clk_in);
+
+    -- Delay line = the TAPS-1 last accepted samples.
+    inv_dl : assert always
+        (live = '1') -> (ok_dl = '1');
+
+    -- Data of every valid main slot = reference value from the window of the slot's beat.
+    inv_mn : assert always
+        (live = '1') -> (ok_mn = (ok_mn'range => '1'));
+
+    -- SKID: data of a valid skid slot = reference value, and a skid slot is in
+    -- use only when the main slot of the same stage is. (SKID = false: always
+    -- true.)
+    inv_sk : assert always
+        (live = '1') -> (ok_sk = (ok_sk'range => '1'));
+}

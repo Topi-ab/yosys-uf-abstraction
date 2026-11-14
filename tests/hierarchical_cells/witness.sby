@@ -1,0 +1,19 @@
+[tasks]
+onebit
+nested
+
+[options]
+mode bmc
+depth 4
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+onebit: read_verilog -formal -sv onebit.sv
+nested: read_verilog -formal -sv nested.sv
+prep -top top
+
+[files]
+onebit.sv
+nested.sv

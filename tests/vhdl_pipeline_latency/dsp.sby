@@ -1,0 +1,22 @@
+[tasks]
+bmc
+prove
+
+[options]
+bmc:   mode bmc
+bmc:   depth 12
+prove: mode prove
+prove: depth 12
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+plugin -i ghdl
+ghdl --std=08 dsp_core.vhdl dsp_dut.vhdl tb_dsp_dut_formal.vhdl -e tb_dsp_dut_formal
+prep -top tb_dsp_dut_formal
+
+[files]
+dsp_core.vhdl
+dsp_dut.vhdl
+tb_dsp_dut_formal.vhdl

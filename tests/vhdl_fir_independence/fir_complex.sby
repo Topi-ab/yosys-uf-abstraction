@@ -1,0 +1,122 @@
+# Complex FIR (fir_complex.vhdl): two properties.
+#   data_*: data does not depend on control (tb_fir_data_formal.vhdl, channels A/B).
+#   ctrl_*: control does not depend on data (tb_fir_ctrl_formal.vhdl, instances C/D).
+# Default parameters TAPS=5, WIDTH=8; test_vhdl_fir_independence.py replaces, in
+# a copy, the generic overrides of the ghdl lines (-gTAPS, -gWIDTH), the counts
+# of the cmul guards and the depth lines.
+[tasks]
+data_bmc        data uf_dut plain dpu bmc_d
+data_bmc_nouf   data nouf_dut plain dpc bmc_dc
+data_prove      data uf_dut inv prove_d
+ctrl_bmc_uf     ctrl uf_dut cu bmc_c
+ctrl_bmc_nouf   ctrl nouf_dut cc bmc_c
+ctrl_prove_uf   ctrl uf_dut cu prove_c
+ctrl_prove_nouf ctrl nouf_dut cc prove_c
+
+[options]
+# data_bmc: depth TAPS+7. The vacuity cover (B has transferred TAPS+2 beats
+# and stalled on both sides) is reached at step TAPS+5. Run time grows steeply
+# with depth, hence no deeper.
+bmc_d:   mode bmc
+bmc_d:   depth 12
+# data_bmc_nouf: the interpreted multipliers, adder and FIR reference are
+# expensive; depth TAPS+6 for TAPS=3 (test_vhdl_fir_independence.py runs this
+# with TAPS=3).
+bmc_dc:  mode bmc
+bmc_dc:  depth 9
+# data_prove: k-induction with auxiliary invariants (tb_fir_data_formal_inv.psl).
+# The smallest working depth is 2 (measured); 3 = 2 + 1 margin. Mutations fail
+# in the basecase only at larger depths (test_prove_mutation_fails: depth 12).
+prove_d: mode prove
+prove_d: depth 3
+bmc_c:   mode bmc
+bmc_c:   depth 20
+# ctrl_prove: the control state is one register (m_valid), visible at a port;
+# the assertion a_m_valid_eq is inductive by itself (k = 1), no auxiliary
+# invariants are needed.
+prove_c: mode prove
+prove_c: depth 2
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+plugin -i ghdl
+# Sources (tags):
+#   plain: the data testbench as is (assertion a_match).
+#   inv:   plus the auxiliary invariants for k-induction (tb_fir_data_formal_inv.psl,
+#          a PSL vunit bound to the testbench architecture; UF mode only).
+# UF_MODE (testbench generic, the testbench passes it to the DUT): true = the
+# DUT's cmul/csum and the data testbench's stim_f/out_f as UFs; false = the
+# DUT's marks switched off (uf_disable = not UF_MODE), the data testbench uses
+# a free stimulus table and an interpreted FIR reference, and a_define is an
+# assertion (a_define_chk). The sby file only gives the value, hence the ghdl
+# line is per task (dpu/dpc = data plain UF/non-UF, cu/cc = ctrl UF/non-UF).
+dpu:   ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gUF_MODE=true fir_complex_pkg.vhdl cmul.vhdl csum.vhdl fir_complex.vhdl tb_fir_stim_formal.vhdl tb_fir_out_formal.vhdl tb_fir_data_formal.vhdl -e tb_fir_data_formal
+dpc:   ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gUF_MODE=false fir_complex_pkg.vhdl cmul.vhdl csum.vhdl fir_complex.vhdl tb_fir_stim_formal.vhdl tb_fir_out_formal.vhdl tb_fir_data_formal.vhdl -e tb_fir_data_formal
+inv:   ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gUF_MODE=true fir_complex_pkg.vhdl cmul.vhdl csum.vhdl fir_complex.vhdl tb_fir_stim_formal.vhdl tb_fir_out_formal.vhdl tb_fir_data_formal.vhdl tb_fir_data_formal_inv.psl -e tb_fir_data_formal
+cu:    ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gUF_MODE=true fir_complex_pkg.vhdl cmul.vhdl csum.vhdl fir_complex.vhdl tb_fir_ctrl_formal.vhdl -e tb_fir_ctrl_formal
+cc:    ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gUF_MODE=false fir_complex_pkg.vhdl cmul.vhdl csum.vhdl fir_complex.vhdl tb_fir_ctrl_formal.vhdl -e tb_fir_ctrl_formal
+# Guard: the ghdl plugin applies only the last analyzed of the vunits bound to
+# the same entity (the others vanish silently), so the number of assertions is
+# checked. dpc: a_define_chk and a_tab_range_chk as well.
+dpu:   select -assert-count 1 tb_fir_data_formal/t:$assert
+dpc:   select -assert-count 3 tb_fir_data_formal/t:$assert
+inv:   select -assert-count 9 tb_fir_data_formal/t:$assert
+ctrl:  select -assert-count 2 tb_fir_ctrl_formal/t:$assert
+# inv: DUT delay lines for the auxiliary invariants. The ghdl plugin does not
+# support VHDL-2008 external names, so the obs_* signals of the vunit (anyseq
+# placeholders) are connected here: the $anyseq cells of the placeholders are
+# deleted, the DUT's dl_re/dl_im are made outputs (expose) and the new ports of
+# the instances are connected to the obs_* wires (connect -port). The DUT
+# source is not touched.
+inv:   select -assert-count 4 tb_fir_data_formal/t:$anyseq
+inv:   delete tb_fir_data_formal/t:$anyseq
+inv:   expose fir_complex_Brtl_*/w:dl_re fir_complex_Brtl_*/w:dl_im
+inv:   cd tb_fir_data_formal
+inv:   connect -port a dl_re tb_fir_data_formal_inv.obs_dl_re_a
+inv:   connect -port a dl_im tb_fir_data_formal_inv.obs_dl_im_a
+inv:   connect -port b dl_re tb_fir_data_formal_inv.obs_dl_re_b
+inv:   connect -port b dl_im tb_fir_data_formal_inv.obs_dl_im_b
+inv:   cd ..
+# Task groups:
+#   uf_dut:   UF_MODE=true: the DUT's multipliers (cmul) and adder (csum)
+#             are UFs.
+#   nouf_dut: UF_MODE=false: the DUT's marks are in place but switched off
+#             (non-UF datapath); the data testbench has no marks (free table
+#             and interpreted reference). The sby file does not remove marks.
+data: prep -top tb_fir_data_formal
+ctrl: prep -top tb_fir_ctrl_formal
+# Guards: a lost mark fails the run if it happens during this section (ghdl,
+# prep). The final model (design_prep.ys) is checked by pytest.
+# Both DUT instances share the fir_complex module, so there are TAPS cmul cells
+# and one csum cell. inv: the vunit adds TAPS cmul, one csum, one out_f and
+# 2*(TAPS-1)+TAPS stim_f cells to the testbench (stim_f in total 2+2*(TAPS-1)+TAPS).
+# The DUT's marks are present in every task; UF_MODE shows in their
+# uf_disable value (GHDL: 1-bit constant, 1'0 = on, 1'1 = off).
+select -assert-count 5 fir_complex_Brtl_*/a:uf_instance=cmul
+select -assert-count 1 fir_complex_Brtl_*/a:uf_instance=csum
+uf_dut:   select -assert-count 6 fir_complex_Brtl_*/a:uf_disable=1'0
+uf_dut:   select -assert-none */a:uf_disable=1'1
+nouf_dut: select -assert-count 6 fir_complex_Brtl_*/a:uf_disable=1'1
+nouf_dut: select -assert-none */a:uf_instance */a:uf_disable=1'1 %d
+dpu:   select -assert-count 2 tb_fir_data_formal/a:uf_instance=stim_f
+dpu:   select -assert-count 2 tb_fir_data_formal/a:uf_instance=out_f
+dpc:   select -assert-none tb_fir_data_formal/a:uf_instance
+inv:   select -assert-count 15 tb_fir_data_formal/a:uf_instance=stim_f
+inv:   select -assert-count 3 tb_fir_data_formal/a:uf_instance=out_f
+inv:   select -assert-count 5 tb_fir_data_formal/a:uf_instance=cmul
+inv:   select -assert-count 1 tb_fir_data_formal/a:uf_instance=csum
+inv:   select -assert-none tb_fir_data_formal/t:$anyseq
+ctrl:  select -assert-none tb_fir_ctrl_formal/a:uf_instance
+
+[files]
+fir_complex_pkg.vhdl
+cmul.vhdl
+csum.vhdl
+fir_complex.vhdl
+tb_fir_stim_formal.vhdl
+tb_fir_out_formal.vhdl
+tb_fir_data_formal.vhdl
+tb_fir_data_formal_inv.psl
+tb_fir_ctrl_formal.vhdl

@@ -1,0 +1,20 @@
+[tasks]
+low       lowbyte
+low_wkeep lowbyte
+full
+
+[options]
+mode bmc
+depth 1
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+lowbyte: read_verilog -formal -sv b_wreduce.sv
+full: read_verilog -formal -sv -DFULL b_wreduce.sv
+low_wkeep: setattr -set keep 1 w:p w:q
+prep -top b_wreduce
+
+[files]
+b_wreduce.sv

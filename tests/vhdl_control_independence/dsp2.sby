@@ -1,0 +1,78 @@
+[tasks]
+bmc            uf plain
+prove          uf inv
+bmc_nouf       nouf plain
+
+[options]
+bmc:          mode bmc
+bmc:          depth 20
+prove:        mode prove
+# prove: k-induction with helper invariants (tb_dsp_formal_inv.psl, inv tag only).
+# The smallest working depth is 3 (with 2 the induction fails on inv_bound; the
+# DUT state is determined within two cycles by the inputs in the window).
+# Depth 4 = 3 + 1 margin. Mutations fail in the basecase: M4 already at depth 3,
+# M3 only at depth 4.
+prove:        depth 4
+bmc_nouf:     mode bmc
+bmc_nouf:     depth 20
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+plugin -i ghdl
+# Sources (tags):
+#   plain: the testbench as is (property a_match).
+#   inv:   in addition the helper invariants for k-induction (tb_dsp_formal_inv.psl,
+#          a PSL vunit bound to the testbench architecture).
+# Guard: of several vunits bound to the same entity, ghdl-plugin applies only
+# the one analysed last (the others are silently dropped), so the number of
+# asserts is checked.
+# UF_MODE (testbench generic): false in the non-UF tasks, which makes a_define
+# an assert (a_define_chk), true otherwise (assume). GHDL's -g selects the value,
+# so the ghdl line is per task (sources plain/inv x mode).
+bmc:          ghdl --std=08 -gUF_MODE=true dsp_f.vhdl dsp.vhdl tb_stim_formal.vhdl tb_out_formal.vhdl tb_dsp_formal.vhdl -e tb_dsp_formal
+prove:        ghdl --std=08 -gUF_MODE=true dsp_f.vhdl dsp.vhdl tb_stim_formal.vhdl tb_out_formal.vhdl tb_dsp_formal.vhdl tb_dsp_formal_inv.psl -e tb_dsp_formal
+bmc_nouf:     ghdl --std=08 -gUF_MODE=false dsp_f.vhdl dsp.vhdl tb_stim_formal.vhdl tb_out_formal.vhdl tb_dsp_formal.vhdl -e tb_dsp_formal
+bmc:          select -assert-count 1 tb_dsp_formal/t:$assert
+prove:        select -assert-count 5 tb_dsp_formal/t:$assert
+bmc_nouf:     select -assert-count 2 tb_dsp_formal/t:$assert
+# Task groups:
+#   uf:       the VHDL marks (dsp_f, stim_f, out_f) are UFs (write_smt2 -> declare-fun).
+#   nouf:     UF_MODE=false switches all marks off (uf_disable = not
+#             UF_MODE in the testbench, the vunit and the DUT, to which the
+#             testbench passes the generic); a comparison run in which every
+#             box runs with its own architecture. The marks stay in RTLIL.
+prep -top tb_dsp_formal
+# Guards: a lost mark (e.g. cell attributes dropped by ghdl-plugin) fails the
+# run if it happens during this [script] section (ghdl, prep). The guards do not
+# see sby's own later model build (design_prep.ys); the final model is checked
+# by pytest (test_vhdl_control_independence.py). Both DUT instances share
+# the DUT module, so there is one u_f cell. The DUT has the generic UF_MODE, so
+# GHDL names the module with a hash of the generic values (dsp_Brtl_<sha1>). In the prove task the vunit adds one
+# stim_f, one out_f and one dsp_f cell to the testbench (index j).
+bmc: select -assert-count 2 tb_dsp_formal/a:uf_instance=stim_f
+bmc: select -assert-count 2 tb_dsp_formal/a:uf_instance=out_f
+bmc: select -assert-count 1 dsp_Brtl_*/a:uf_instance=dsp_f
+prove: select -assert-count 3 tb_dsp_formal/a:uf_instance=stim_f
+prove: select -assert-count 3 tb_dsp_formal/a:uf_instance=out_f
+prove: select -assert-count 1 tb_dsp_formal/a:uf_instance=dsp_f
+prove: select -assert-count 1 dsp_Brtl_*/a:uf_instance=dsp_f
+# UF_MODE is visible in the marks: GHDL computes the uf_disable value (a 1-bit
+# constant) from the generic. uf: all marks on (1'0). nouf: the same marks
+# (4 in the testbench, 1 in the DUT) in place and all switched off (1'1).
+bmc:      select -assert-count 5 */a:uf_disable=1'0
+prove:    select -assert-count 8 */a:uf_disable=1'0
+uf:       select -assert-none */a:uf_disable=1'1
+nouf:     select -assert-count 4 tb_dsp_formal/a:uf_instance
+nouf:     select -assert-count 1 dsp_Brtl_*/a:uf_instance=dsp_f
+nouf:     select -assert-count 5 */a:uf_disable=1'1
+nouf:     select -assert-none */a:uf_instance */a:uf_disable=1'1 %d
+
+[files]
+dsp_f.vhdl
+dsp.vhdl
+tb_stim_formal.vhdl
+tb_out_formal.vhdl
+tb_dsp_formal.vhdl
+tb_dsp_formal_inv.psl

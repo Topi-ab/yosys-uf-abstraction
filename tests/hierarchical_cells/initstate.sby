@@ -1,0 +1,18 @@
+[tasks]
+mark
+nomark
+
+[options]
+mode bmc
+depth 4
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+read_verilog -formal -sv initstate.sv
+prep -top top
+nomark: setattr -unset uf_instance top/*
+
+[files]
+initstate.sv

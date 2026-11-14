@@ -1,0 +1,43 @@
+# uf_disable. The parameter/generic UF_MODE in the source selects the UF or the
+# non-UF model; sby only supplies the value (-chparam / -g). bad: an assertion
+# that holds only in the non-UF model (FAIL as a UF, PASS in the non-UF model).
+[tasks]
+sv_uf
+sv_uf_bad       bad
+sv_nouf_bad     bad
+vhdl_uf
+vhdl_uf_bad
+vhdl_nouf_bad
+
+[options]
+mode bmc
+depth 2
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+bad: verilog_defines -DBAD
+sv_uf:         read_verilog -formal -sv disable.sv
+sv_uf_bad:     read_verilog -formal -sv disable.sv
+sv_nouf_bad:   read_verilog -formal -sv disable.sv
+sv_uf:         hierarchy -top top
+sv_uf_bad:     hierarchy -top top
+sv_nouf_bad:   hierarchy -top top -chparam UF_MODE 0
+sv_uf:         prep -top top
+sv_uf_bad:     prep -top top
+sv_nouf_bad:   prep -top top
+vhdl_uf:       plugin -i ghdl
+vhdl_uf_bad:   plugin -i ghdl
+vhdl_nouf_bad: plugin -i ghdl
+vhdl_uf:       ghdl --std=08 uf_dis_box.vhdl tb_uf_disable_formal.vhdl -e tb_uf_disable_formal
+vhdl_uf_bad:   ghdl --std=08 -gBAD=true uf_dis_box.vhdl tb_uf_disable_formal.vhdl -e tb_uf_disable_formal
+vhdl_nouf_bad: ghdl --std=08 -gUF_MODE=false -gBAD=true uf_dis_box.vhdl tb_uf_disable_formal.vhdl -e tb_uf_disable_formal
+vhdl_uf:       prep -top tb_uf_disable_formal
+vhdl_uf_bad:   prep -top tb_uf_disable_formal
+vhdl_nouf_bad: prep -top tb_uf_disable_formal
+
+[files]
+disable.sv
+uf_dis_box.vhdl
+tb_uf_disable_formal.vhdl

@@ -1,0 +1,40 @@
+[tasks]
+yices_plain       ok   yices
+yices_unroll      ok   yices
+z3_plain          ok   z3
+z3_unroll         ok   z3
+bitwuzla_plain    ok   bitwuzla
+bitwuzla_unroll   ok   bitwuzla
+yices_plain_bad   bad  yices
+yices_unroll_bad  bad  yices
+z3_plain_bad      bad  z3
+z3_unroll_bad     bad  z3
+bitwuzla_plain_bad  bad  bitwuzla
+bitwuzla_unroll_bad bad  bitwuzla
+
+[options]
+mode bmc
+depth 4
+
+[engines]
+yices_plain:      smtbmc yices
+yices_unroll:     smtbmc --unroll yices
+z3_plain:         smtbmc z3
+z3_unroll:        smtbmc --unroll z3
+yices_plain_bad:  smtbmc yices
+yices_unroll_bad: smtbmc --unroll yices
+z3_plain_bad:     smtbmc z3
+z3_unroll_bad:    smtbmc --unroll z3
+bitwuzla_plain:      smtbmc bitwuzla
+bitwuzla_unroll:     smtbmc --unroll bitwuzla
+bitwuzla_plain_bad:  smtbmc bitwuzla
+bitwuzla_unroll_bad: smtbmc --unroll bitwuzla
+
+[script]
+ok:  read_verilog -formal -sv single.sv
+bad: read_verilog -formal -sv -DBAD single.sv
+prep -top top
+select -assert-count 2 top/a:uf_instance=f
+
+[files]
+single.sv

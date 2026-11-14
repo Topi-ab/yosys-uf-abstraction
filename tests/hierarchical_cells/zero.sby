@@ -1,0 +1,21 @@
+[tasks]
+plain    ok
+unroll   ok
+free     bad
+
+[options]
+mode bmc
+depth 5
+
+[engines]
+plain:  smtbmc bitwuzla
+unroll: smtbmc --unroll bitwuzla
+free:   smtbmc bitwuzla
+
+[script]
+ok:  read_verilog -formal -sv zero.sv
+bad: read_verilog -formal -sv -DBAD zero.sv
+prep -top top
+
+[files]
+zero.sv

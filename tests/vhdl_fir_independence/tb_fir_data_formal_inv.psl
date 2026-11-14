@@ -1,0 +1,214 @@
+-- Auxiliary invariants for the k-induction of the data property (data_prove).
+-- The actual assertion (a_match, symbolic index j) is in the testbench; this
+-- vunit holds only the auxiliary invariants and their helper structures. The
+-- vunit is bound to the testbench architecture and analyzed only in the
+-- data_prove task (fir_complex.sby: inv tag). One vunit per bound entity (the
+-- ghdl plugin applies only the last of the vunits bound to the same entity).
+--
+-- The invariants are assertions: they are proven themselves (basecase +
+-- induction), so a wrong invariant fails and cannot produce a false PASS.
+--
+-- The DUT delay lines (dl_re, dl_im) are not visible at the ports, and the
+-- ghdl-yosys-plugin does not support VHDL-2008 external names. Therefore the
+-- obs_* signals are only anyseq placeholders in VHDL (without a driver GHDL
+-- would replace them with a constant and no wire would exist): fir_complex.sby
+-- deletes the $anyseq cells of the placeholders, brings the delay line out as
+-- a DUT output (yosys expose) and connects it to these wires (connect -port).
+-- The DUT source stays untouched. The correctness of the connection shows in
+-- the invariant inv_dl_* itself: a wrong connection or bit order fails in the
+-- basecase.
+--
+-- Delay line bit order (GHDL, smp_t(0 to TAPS-2)): element 0 in the most
+-- significant bits, element k in bits (TAPS-1-k)*WIDTH-1 downto
+-- (TAPS-2-k)*WIDTH.
+vunit tb_fir_data_formal_inv(tb_fir_data_formal(formal)) {
+    constant PW : positive := prod_width(WIDTH);
+    constant DW : positive := (TAPS - 1) * WIDTH;
+
+    -- Delay lines of the DUT instances (driven by yosys, see the header).
+    signal obs_dl_re_a, obs_dl_im_a : std_logic_vector(DW - 1 downto 0);
+    signal obs_dl_re_b, obs_dl_im_b : std_logic_vector(DW - 1 downto 0);
+    attribute anyseq : boolean;
+    attribute anyseq of obs_dl_re_a : signal is true;
+    attribute anyseq of obs_dl_im_a : signal is true;
+    attribute anyseq of obs_dl_re_b : signal is true;
+    attribute anyseq of obs_dl_im_b : signal is true;
+    -- Expected delay line: element k = stim_f(icnt - 1 - k), or 0 when icnt <= k.
+    signal exp_dl_re_a, exp_dl_im_a : std_logic_vector(DW - 1 downto 0);
+    signal exp_dl_re_b, exp_dl_im_b : std_logic_vector(DW - 1 downto 0);
+
+    -- A has transferred beat j since reset, i.e. a_define has defined out_f(j).
+    signal def_a : std_logic := '0';
+
+    -- Correct value of beat j: ref_j = csum(cmul(x[j-k], c(k))), x[m] = stim_f(m)
+    -- or 0 when m < 0. The same UF symbols as in the testbench and the DUT.
+    signal xj_re, xj_im     : std_logic_vector(TAPS * WIDTH - 1 downto 0);
+    signal pj_re, pj_im     : signed(TAPS * PW - 1 downto 0);
+    signal refj_re, refj_im : signed(OW - 1 downto 0);
+    signal ufj_re, ufj_im   : signed(OW - 1 downto 0);
+
+    attribute uf_instance of u_sum_j : label is "csum";
+    attribute uf_instance of u_out_j : label is "out_f";
+
+    gen_dl : for k in 0 to TAPS - 2 generate
+        signal idx_a, idx_b       : unsigned(15 downto 0);
+        signal sa_re, sa_im       : signed(WIDTH - 1 downto 0);
+        signal sb_re, sb_im       : signed(WIDTH - 1 downto 0);
+        attribute uf_instance of u_stim_dl_a : label is "stim_f";
+        attribute uf_instance of u_stim_dl_b : label is "stim_f";
+    begin
+        idx_a <= icnt_a - 1 - k;
+        idx_b <= icnt_b - 1 - k;
+
+        u_stim_dl_a : entity work.tb_fir_stim_formal
+            generic map (
+                WIDTH => WIDTH
+            )
+            port map (
+                idx_in => idx_a,
+                re_out => sa_re,
+                im_out => sa_im
+            );
+
+        u_stim_dl_b : entity work.tb_fir_stim_formal
+            generic map (
+                WIDTH => WIDTH
+            )
+            port map (
+                idx_in => idx_b,
+                re_out => sb_re,
+                im_out => sb_im
+            );
+
+        exp_dl_re_a((TAPS - 1 - k) * WIDTH - 1 downto (TAPS - 2 - k) * WIDTH) <=
+            std_logic_vector(sa_re) when icnt_a > k else (others => '0');
+        exp_dl_im_a((TAPS - 1 - k) * WIDTH - 1 downto (TAPS - 2 - k) * WIDTH) <=
+            std_logic_vector(sa_im) when icnt_a > k else (others => '0');
+        exp_dl_re_b((TAPS - 1 - k) * WIDTH - 1 downto (TAPS - 2 - k) * WIDTH) <=
+            std_logic_vector(sb_re) when icnt_b > k else (others => '0');
+        exp_dl_im_b((TAPS - 1 - k) * WIDTH - 1 downto (TAPS - 2 - k) * WIDTH) <=
+            std_logic_vector(sb_im) when icnt_b > k else (others => '0');
+    end generate;
+
+    gen_ref : for k in 0 to TAPS - 1 generate
+        signal idx        : unsigned(15 downto 0);
+        signal s_re, s_im : signed(WIDTH - 1 downto 0);
+        signal x_re, x_im : signed(WIDTH - 1 downto 0);
+        signal p_re, p_im : signed(PW - 1 downto 0);
+        signal c_re, c_im : signed(WIDTH - 1 downto 0);
+        attribute uf_instance of u_stim_j : label is "stim_f";
+        attribute uf_instance of u_mul_j  : label is "cmul";
+    begin
+        idx  <= j - k;
+        c_re <= to_signed(COEF_RE(k), WIDTH);
+        c_im <= to_signed(COEF_IM(k), WIDTH);
+
+        u_stim_j : entity work.tb_fir_stim_formal
+            generic map (
+                WIDTH => WIDTH
+            )
+            port map (
+                idx_in => idx,
+                re_out => s_re,
+                im_out => s_im
+            );
+
+        x_re <= s_re when j >= k else (others => '0');
+        x_im <= s_im when j >= k else (others => '0');
+
+        u_mul_j : entity work.cmul
+            generic map (
+                WIDTH => WIDTH
+            )
+            port map (
+                a_re_in  => x_re,
+                a_im_in  => x_im,
+                b_re_in  => c_re,
+                b_im_in  => c_im,
+                y_re_out => p_re,
+                y_im_out => p_im
+            );
+
+        pj_re((k + 1) * PW - 1 downto k * PW) <= p_re;
+        pj_im((k + 1) * PW - 1 downto k * PW) <= p_im;
+    end generate;
+
+    u_sum_j : entity work.csum
+        generic map (
+            TAPS  => TAPS,
+            WIDTH => WIDTH
+        )
+        port map (
+            p_re_in  => pj_re,
+            p_im_in  => pj_im,
+            s_re_out => refj_re,
+            s_im_out => refj_im
+        );
+
+    u_out_j : entity work.tb_fir_out_formal
+        generic map (
+            OW => OW
+        )
+        port map (
+            idx_in => j,
+            re_out => ufj_re,
+            im_out => ufj_im
+        );
+
+    process (clk_in) is
+    begin
+        if rising_edge(clk_in) then
+            if rst_in = '1' then
+                def_a <= '0';
+            elsif armed = '1' and m_xfer_a = '1' and ocnt_a = j then
+                def_a <= '1';
+            end if;
+        end if;
+    end process;
+
+    default clock is rising_edge(clk_in);
+
+    -- Counters vs. output register: icnt - ocnt = m_valid (latency 1, one beat
+    -- in flight). Without this the DUT produces, in the induction start state,
+    -- a beat whose index is not ocnt. Encodes the DUT latency.
+    inv_cnt_a : assert always
+        (first = '0') -> (icnt_a - ocnt_a = ("000000000000000" & m_valid_a));
+    inv_cnt_b : assert always
+        (first = '0') -> (icnt_b - ocnt_b = ("000000000000000" & m_valid_b));
+
+    -- B is not ahead of A on the input (A accepts every cycle). Together with
+    -- the a_no_wrap assumption, icnt_b does not wrap either.
+    inv_icnt : assert always
+        (first = '0') -> (icnt_b <= icnt_a);
+
+    -- Delay line = the last TAPS-1 accepted stimulus samples (0 before them).
+    -- Replaces the whole input history: without this the delay line of the
+    -- induction start state is arbitrary.
+    inv_dl_a : assert always
+        (first = '0') -> (obs_dl_re_a = exp_dl_re_a and obs_dl_im_a = exp_dl_im_a);
+    inv_dl_b : assert always
+        (first = '0') -> (obs_dl_re_b = exp_dl_re_b and obs_dl_im_b = exp_dl_im_b);
+
+    -- B's output register at beat j holds ref_j. The same is not needed for A
+    -- (checked by removing it): at full rate A accepts beat j one cycle before
+    -- transferring it, so even the smallest induction window covers the
+    -- computation starting from inv_dl_a and inv_cnt_a.
+    inv_out_b : assert always
+        (first = '0' and m_valid_b = '1' and ocnt_b = j) ->
+        (m_re_b = refj_re and m_im_b = refj_im);
+
+    -- Before A has transferred j: B is not ahead of A, A has not passed j, and
+    -- when they are level B has a beat in flight only if A has one too. So when
+    -- B transfers beat j, A has transferred it earlier (def_a) or transfers it
+    -- in the same cycle (a_define).
+    inv_order : assert always
+        (first = '0' and def_a = '0') ->
+        (ocnt_b <= ocnt_a and ocnt_a <= j and
+         (ocnt_b /= ocnt_a or m_valid_b = '0' or m_valid_a = '1'));
+
+    -- Defined output function at the symbolic index: once A has transferred j,
+    -- out_f(j) = ref_j. Replaces the quantifier "out_f is defined at every
+    -- index < ocnt_a".
+    inv_bound : assert always
+        (def_a = '1') -> (ufj_re = refj_re and ufj_im = refj_im);
+}

@@ -1,0 +1,62 @@
+# UF vs. classical k-induction (prove) with the same testbench, vunit and
+# assertion. The only difference between the tasks is the DUT multiplication:
+#   prove_uf:   testbench stim_f/out_f as UFs AND the DUT $mul = mulw (UF).
+#   prove_nouf: testbench stim_f/out_f as UFs, the DUT $mul interpreted
+#               ("classical": symbolic data through the real multiplier).
+#   bmc_uf / bmc_nouf: the same models in bmc mode (for comparison only).
+# Width and depth come from environment variables (sby pycode; every block
+# runs in its own namespace, hence the import in every block):
+#   PROVE_WIDTH (default 8): data width, ghdl -gWIDTH=..
+#   PROVE_DEPTH: default 4 in the prove tasks (k = 3 + 1 margin, see below),
+#                default 8 in the bmc tasks.
+[tasks]
+prove_uf    prove ufdut
+prove_nouf  prove
+bmc_uf      bmc   ufdut
+bmc_nouf    bmc
+
+[options]
+prove: mode prove
+bmc:   mode bmc
+# The smallest working depth is 3 in both prove tasks at the measured widths
+# 4, 8 and 16 (test_min_depth checks width 4); 4 = 3 + 1 margin, as in
+# vhdl_control_independence_setattr.
+--pycode-begin--
+import os
+output("depth " + os.environ.get("PROVE_DEPTH", "4" if "prove" in tags else "8"))
+--pycode-end--
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+plugin -i ghdl
+--pycode-begin--
+import os
+output("ghdl --std=08 -gWIDTH=" + os.environ.get("PROVE_WIDTH", "8") + " dsp.vhdl tb_stim_formal.vhdl tb_out_formal.vhdl tb_dsp_formal.vhdl tb_dsp_formal_inv.psl -e tb_dsp_formal")
+--pycode-end--
+# Guard: of the vunits bound to the same entity, ghdl-plugin applies only the
+# last one analyzed, so the number of assertions is checked (a_match + 4).
+select -assert-count 5 tb_dsp_formal/t:$assert
+# The DUT $mul is marked from the tool side (as in
+# tests/vhdl_control_independence_setattr). The selection is limited to the
+# DUT module; the module name depends on the generic, hence dsp*. All DUT
+# instances (a, b and c of the vunit) share the same module.
+# setattr is required here: the $mul is created by synthesis from an
+# expression and has no VHDL name, so the mark (or a uf_disable generic)
+# cannot be written in the source. The testbench marks are in the VHDL.
+ufdut: setattr -set uf_instance "mulw" dsp*/t:$mul
+ufdut: setattr -set keep 1 dsp*/t:$mul
+prep -top tb_dsp_formal
+ufdut: select -assert-count 1 a:uf_instance=mulw
+# The testbench UFs (stim_f/out_f) are on in all tasks:
+# a, b and the j instance of the vunit.
+select -assert-count 3 tb_dsp_formal/a:uf_instance=stim_f
+select -assert-count 3 tb_dsp_formal/a:uf_instance=out_f
+
+[files]
+dsp.vhdl
+tb_stim_formal.vhdl
+tb_out_formal.vhdl
+tb_dsp_formal.vhdl
+tb_dsp_formal_inv.psl

@@ -1,0 +1,97 @@
+-- Helper invariants for k-induction (the prove task). The actual property
+-- (a_match, symbolic index j) is in the testbench; this vunit contains only
+-- the helper invariants and their helper structures. The vunit is bound to the
+-- testbench architecture and analysed only in the prove task (dsp2.sby: inv tag).
+--
+-- The invariants are asserts, not assumes: they are proven themselves
+-- (basecase + induction). A wrong invariant fails; it cannot produce a wrong
+-- PASS. The set is minimal: removing any one of them makes the induction fail.
+-- Induction depth k = 3: the DUT state (v1, s1, valid_out, data_out) is
+-- determined within two cycles by the inputs in the window.
+--
+-- The DUT (dsp.vhdl) is left untouched. ghdl-yosys-plugin does not support
+-- VHDL-2008 external names, so the DUT's internal state cannot be referenced
+-- from here: the shadow of v1 (vq_*) is computed from the ports.
+vunit tb_dsp_formal_inv(tb_dsp_formal(formal)) {
+    -- Shadow of the DUT's first pipeline stage (v1).
+    signal vq_a, vq_b : std_logic := '0';
+    -- A has produced beat j since reset, i.e. a_define has defined out_f(j).
+    signal def_a      : std_logic := '0';
+    -- ref_j = dsp_f(stim_f(j)): the correct value of beat j. The same UF symbols
+    -- as in the testbench and the DUT (the uf_instance attribute is declared in
+    -- tb_dsp_formal.vhdl; the vunit shares the architecture's scope).
+    signal stim_j     : signed(15 downto 0);
+    signal ref_j      : signed(15 downto 0);
+    signal ufout_j    : signed(15 downto 0);
+    attribute uf_instance of u_stim_j : label is "stim_f";
+    attribute uf_instance of u_dsp_j  : label is "dsp_f";
+    attribute uf_instance of u_out_j  : label is "out_f";
+    -- The testbench generic UF_MODE is visible in the vunit (bound to the architecture).
+    attribute uf_disable of u_stim_j : label is not UF_MODE;
+    attribute uf_disable of u_dsp_j  : label is not UF_MODE;
+    attribute uf_disable of u_out_j  : label is not UF_MODE;
+
+    u_stim_j : entity work.tb_stim_formal
+        port map (
+            idx_in   => signed(j),
+            data_out => stim_j
+        );
+
+    u_dsp_j : entity work.dsp_f
+        port map (
+            data_in  => stim_j,
+            data_out => ref_j
+        );
+
+    u_out_j : entity work.tb_out_formal
+        port map (
+            idx_in   => signed(j),
+            data_out => ufout_j
+        );
+
+    process (clk_in) is
+    begin
+        if rising_edge(clk_in) then
+            if rst_in = '1' then
+                vq_a  <= '0';
+                vq_b  <= '0';
+                def_a <= '0';
+            else
+                vq_a <= valid_a_in;
+                vq_b <= valid_b_in;
+                if armed = '1' and yvalid_a = '1' and ocnt_a = j then
+                    def_a <= '1';
+                end if;
+            end if;
+        end if;
+    end process;
+
+    default clock is rising_edge(clk_in);
+
+    -- Counters vs. pipeline: icnt - ocnt = number of beats in the pipeline
+    -- (vq + valid_out, 0..2). The counters are long-lived state, so without
+    -- these the DUT produces, in the induction's initial state, a beat whose
+    -- index is not ocnt.
+    -- For A: the data of A's beat j is dsp_f(stim_f(j)) when def_a rises (inv_bound).
+    -- For B: the data of B's beat j is dsp_f(stim_f(j)) (a_match).
+    -- Note: this encodes the DUT latency (2); a latency change fails here.
+    inv_cnt_a : assert always
+        (first = '0') ->
+        (icnt_a - ocnt_a = ("00000000000000" & (vq_a and yvalid_a) & (vq_a xor yvalid_a)));
+    inv_cnt_b : assert always
+        (first = '0') ->
+        (icnt_b - ocnt_b = ("00000000000000" & (vq_b and yvalid_b) & (vq_b xor yvalid_b)));
+
+    -- Before A has produced j, B is not ahead of A and A has not passed j.
+    -- So when B produces beat j, A has produced it earlier or produces it on
+    -- the same cycle (a_define). Both parts are needed (removing either one
+    -- makes the induction fail).
+    inv_order : assert always
+        (first = '0' and def_a = '0') -> (ocnt_b <= ocnt_a and ocnt_a <= j);
+
+    -- The defined output function at one symbolic index: once A has
+    -- produced j, out_f(j) = dsp_f(stim_f(j)). This replaces the quantifier
+    -- "out_f is defined at every index < ocnt_a".
+    inv_bound : assert always
+        (def_a = '1') -> (ufout_j = ref_j);
+}

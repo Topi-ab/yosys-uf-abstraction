@@ -1,0 +1,18 @@
+[tasks]
+none
+keep
+
+[options]
+mode bmc
+depth 1
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+read_verilog -formal -sv b_merge2.sv
+keep: setattr -set keep 1 a:uf_instance
+prep -top b_merge2
+
+[files]
+b_merge2.sv

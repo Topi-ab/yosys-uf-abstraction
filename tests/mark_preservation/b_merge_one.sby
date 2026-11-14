@@ -1,0 +1,18 @@
+[tasks]
+none
+keep_both
+
+[options]
+mode bmc
+depth 1
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+read_verilog -formal -sv b_merge_one.sv
+keep_both: setattr -set keep 1 t:$mul
+prep -top b_merge_one
+
+[files]
+b_merge_one.sv

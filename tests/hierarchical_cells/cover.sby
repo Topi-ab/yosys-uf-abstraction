@@ -1,0 +1,13 @@
+[options]
+mode cover
+depth 3
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+read_verilog -formal -sv single.sv
+prep -top top
+
+[files]
+single.sv

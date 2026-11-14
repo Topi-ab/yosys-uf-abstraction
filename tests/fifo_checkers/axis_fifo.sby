@@ -1,0 +1,88 @@
+# AXI Stream FIFO: UF checker (uf), scoreboard (sb) and k-induction of the
+# scoreboard (prove, auxiliary invariants in tb_axis_fifo_sb_formal_inv.psl).
+# Parameters: the line "D, W = .." in both pycode blocks (default DEPTH=4,
+# WIDTH=8); test_fifo_checkers.py and compare.py replace it in a copy.
+# BMC depth 2*DEPTH+6: filling takes DEPTH cycles and draining DEPTH+1 cycles
+# after reset, so the horizon covers states where the FIFO has been full,
+# every memory slot has been written and read and the pointers have wrapped
+# (the vacuity cover is reached at step 2*DEPTH+2).
+# prove: induction depth PROVE_K (k = 2 is the minimum; k = 1 is not enough).
+[tasks]
+uf    bmc
+sb    bmc
+prove
+
+[options]
+bmc: mode bmc
+prove: mode prove
+--pycode-begin--
+D, W = 4, 8
+PROVE_K = 2
+output("depth %d" % (PROVE_K if "prove" in tags else 2 * D + 6))
+--pycode-end--
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+plugin -i ghdl
+--pycode-begin--
+D, W = 4, 8
+g = "ghdl --std=08 -gDEPTH=%d -gWIDTH=%d axis_fifo.vhdl tb_axis_ctrl_formal.vhdl " % (D, W)
+if "uf" in tags:
+    output(g + "tb_axis_stim_formal.vhdl tb_axis_fifo_uf_formal.vhdl -e tb_axis_fifo_uf_formal")
+    output("prep -top tb_axis_fifo_uf_formal")
+if "sb" in tags:
+    output(g + "tb_stream_scoreboard_formal.vhdl tb_axis_fifo_sb_formal.vhdl -e tb_axis_fifo_sb_formal")
+    output("prep -top tb_axis_fifo_sb_formal")
+if "prove" in tags:
+    output(g + "tb_stream_scoreboard_formal.vhdl tb_axis_fifo_sb_formal.vhdl "
+           "tb_axis_fifo_sb_formal_inv.psl -e tb_axis_fifo_sb_formal")
+    output("prep -top tb_axis_fifo_sb_formal")
+# Memories to registers (the DUT's mem): same semantics, but bit-level
+# registers solve faster than the array theory.
+output("memory_map")
+output("opt -fast")
+# Guards: two marked stim instances in the uf testbench, none in the others.
+if "uf" in tags:
+    output("select -assert-count 2 */a:uf_instance=stim_f")
+else:
+    output("select -assert-none */a:uf_instance")
+if "prove" in tags:
+    # Probes p_* (inv.psl) to internal signals of the DUT and the scoreboard.
+    # ghdl-yosys-plugin does not support external names, so in VHDL the probes
+    # are anyseq signals whose driver is replaced after flattening. Guard: the
+    # anyseq cells of the probes (10) disappear; the six defined anyseq
+    # signals of the scoreboard remain (master_ptr is $anyconst).
+    I = "tb_axis_fifo_sb_formal_inv."
+    output("flatten")
+    output("cd tb_axis_fifo_sb_formal")
+    output("select -assert-count 16 t:$anyseq")
+    # DUT memory slots as separate words dut.mem[j] (memory_map). If the memory
+    # had not been recognized, dut.mem would be one wide wire and dut.mem[j]
+    # its bit j: the guard prevents connecting a probe to the wrong place.
+    output("select -assert-count %d w:dut.mem[[]*" % D)
+    output("connect -set %sp_count dut.count" % I)
+    output("connect -set %sp_rd dut.rd" % I)
+    output("connect -set %sp_wr dut.wr" % I)
+    for j in range(D):
+        output("connect -set %sp_mem[%d:%d] dut.mem[%d]" % (I, j * W + W - 1, j * W, j))
+    output("connect -set %sp_a_ptr sb.a_ptr" % I)
+    output("connect -set %sp_b_ptr sb.b_ptr" % I)
+    output("connect -set %sp_a_captured sb.a_captured" % I)
+    output("connect -set %sp_b_captured sb.b_captured" % I)
+    output("connect -set %sp_master_ptr sb.master_ptr" % I)
+    output("connect -set %sp_mem_a sb.mem_a" % I)
+    output("opt_clean")
+    output("select -assert-count 6 t:$anyseq")
+    output("cd ..")
+--pycode-end--
+
+[files]
+axis_fifo.vhdl
+tb_axis_stim_formal.vhdl
+tb_axis_ctrl_formal.vhdl
+tb_axis_fifo_uf_formal.vhdl
+tb_axis_fifo_sb_formal.vhdl
+tb_stream_scoreboard_formal.vhdl
+tb_axis_fifo_sb_formal_inv.psl

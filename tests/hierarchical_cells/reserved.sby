@@ -1,0 +1,14 @@
+[options]
+mode bmc
+depth 2
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+read_verilog -formal -sv reserved.sv
+prep -top top
+setattr -set uf_instance "bvadd" top/t:$add
+
+[files]
+reserved.sv

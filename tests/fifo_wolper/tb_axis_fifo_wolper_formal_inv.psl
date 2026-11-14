@@ -1,0 +1,108 @@
+-- Auxiliary invariants for k-induction (prove_wolper). Analyzed only in the
+-- prove task (axis_fifo_wolper.sby).
+--
+-- The invariants are assertions, not assumptions: they are proven themselves,
+-- so a wrong invariant fails and cannot produce a false PASS.
+--
+-- Internal state of the DUT. ghdl-yosys-plugin does not support VHDL-2008
+-- external names, so the DUT's count, rd, wr and mem are brought here into
+-- the probe signals p_*: in VHDL they are anyseq signals (free, so GHDL cannot
+-- fold them into constants), and the sby script replaces their driver after
+-- flattening with `connect -set p_count dut.count` etc. If a connection were
+-- missing, p_* would be free and the invariants would fail (no false PASS);
+-- the select guards of the sby script also make sure that no anyseq cells
+-- remain.
+--
+-- Invariants (D = DEPTH, occ = icnt - ocnt):
+--   inv_range: rd < D, wr < D (excludes unused values of the pointer bits)
+--   inv_count: count = occ (DUT fill level = difference of the testbench
+--              counters)
+--   inv_wr:    wr = (rd + count) mod D
+--   inv_mem:   every occupied slot (rd + j) mod D, j < count, holds the
+--              expected value of beat ocnt + j: a if ocnt + j = k, otherwise b.
+vunit tb_axis_fifo_wolper_formal_inv(tb_axis_fifo_wolper_formal(formal)) {
+    -- Probe widths: count 0..D, rd/wr 0..D-1 (GHDL encodes a natural range
+    -- 0..N signal with the number of bits that fits N). connect -set fails
+    -- with a width error if they do not match the DUT signals.
+    function nbits(n : natural) return natural is
+        variable r : natural := 0;
+        variable v : natural := n;
+    begin
+        while v > 0 loop
+            r := r + 1;
+            v := v / 2;
+        end loop;
+        return r;
+    end function;
+    constant CW : natural := nbits(DEPTH);
+    constant PW : natural := nbits(DEPTH - 1);
+    signal p_count : unsigned(CW - 1 downto 0);
+    signal p_rd    : unsigned(PW - 1 downto 0);
+    signal p_wr    : unsigned(PW - 1 downto 0);
+    -- Slot j as bits j*WIDTH + WIDTH-1 .. j*WIDTH.
+    signal p_mem   : std_logic_vector(DEPTH * WIDTH - 1 downto 0);
+    attribute anyseq : boolean;
+    attribute anyseq of p_count : signal is true;
+    attribute anyseq of p_rd    : signal is true;
+    attribute anyseq of p_wr    : signal is true;
+    attribute anyseq of p_mem   : signal is true;
+
+    -- Initial-state flag: '0' only on the first cycle (like ctrl's first).
+    signal started : std_logic := '0';
+    signal occ     : unsigned(31 downto 0);
+    signal mem_ok  : std_logic;
+
+    occ <= icnt - ocnt;
+
+    process (clk_in) is
+    begin
+        if rising_edge(clk_in) then
+            started <= '1';
+        end if;
+    end process;
+
+    process (all) is
+        variable off : natural;
+        variable ok  : std_logic;
+    begin
+        ok := '1';
+        for j in 0 to DEPTH - 1 loop
+            if j >= to_integer(p_rd) then
+                off := j - to_integer(p_rd);
+            else
+                off := j + DEPTH - to_integer(p_rd);
+            end if;
+            if off < to_integer(p_count) then
+                if ocnt + off = k then
+                    if p_mem(j * WIDTH + WIDTH - 1 downto j * WIDTH) /= a then
+                        ok := '0';
+                    end if;
+                else
+                    if p_mem(j * WIDTH + WIDTH - 1 downto j * WIDTH) /= b then
+                        ok := '0';
+                    end if;
+                end if;
+            end if;
+        end loop;
+        mem_ok <= ok;
+    end process;
+
+    default clock is rising_edge(clk_in);
+
+    -- The same initial reset as ctrl's a_init_reset, with its own flag (ctrl's
+    -- first is not visible here). In real runs started = '0' only on cycle 0.
+    a_inv_init_reset : assume always
+        (started = '0') -> (rst_in = '1');
+
+    a_inv_range : assert always
+        (started = '1') -> (p_rd < DEPTH and p_wr < DEPTH);
+
+    a_inv_count : assert always
+        (started = '1') -> (resize(p_count, 32) = occ);
+
+    a_inv_wr : assert always
+        (started = '1') -> ((to_integer(p_rd) + to_integer(p_count)) mod DEPTH = to_integer(p_wr));
+
+    a_inv_mem : assert always
+        (started = '1') -> (mem_ok = '1');
+}

@@ -1,0 +1,109 @@
+[tasks]
+bmc_nouf        bmc   nouf plain
+bmc_tbuf        bmc   tbuf plain
+bmc_uf          bmc   uf tbuf plain
+prove_nouf      prove nouf inv
+prove_uf        prove uf tbuf inv
+
+[options]
+bmc:            mode bmc
+prove:          mode prove
+bmc_nouf:       depth 20
+bmc_tbuf:       depth 8
+bmc_uf:         depth 20
+# prove: k-induction with helper invariants (tb_dsp_formal_inv.psl, inv tag only).
+# The smallest working depth is 3 (with 2 the induction fails on inv_bound; the
+# DUT state is determined within two cycles by the inputs in the window).
+# Depth 4 = 3 + 1 margin. Mutations fail in the basecase: M4 already at depth 3,
+# M3 only at depth 4.
+prove_nouf:     depth 4
+prove_uf:       depth 4
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+plugin -i ghdl
+# Sources (tags):
+#   plain: the testbench as is (property a_match).
+#   inv:   in addition the helper invariants for k-induction (tb_dsp_formal_inv.psl,
+#          a PSL vunit bound to the testbench architecture).
+# Guard: of several vunits bound to the same entity, ghdl-plugin applies only
+# the one analysed last (the others are silently dropped), so the number of
+# asserts is checked.
+# UF_MODE (testbench generic): false in the non-UF tasks, which makes a_define
+# an assert (a_define_chk), true otherwise (assume). GHDL's -g selects the value,
+# so the ghdl line is per task (sources plain/inv x mode).
+bmc_nouf:       ghdl --std=08 -gUF_MODE=false dsp.vhdl tb_stim_formal.vhdl tb_out_formal.vhdl tb_dsp_formal.vhdl -e tb_dsp_formal
+bmc_tbuf:       ghdl --std=08 -gUF_MODE=true dsp.vhdl tb_stim_formal.vhdl tb_out_formal.vhdl tb_dsp_formal.vhdl -e tb_dsp_formal
+bmc_uf:         ghdl --std=08 -gUF_MODE=true dsp.vhdl tb_stim_formal.vhdl tb_out_formal.vhdl tb_dsp_formal.vhdl -e tb_dsp_formal
+prove_nouf:     ghdl --std=08 -gUF_MODE=false dsp.vhdl tb_stim_formal.vhdl tb_out_formal.vhdl tb_dsp_formal.vhdl tb_dsp_formal_inv.psl -e tb_dsp_formal
+prove_uf:       ghdl --std=08 -gUF_MODE=true dsp.vhdl tb_stim_formal.vhdl tb_out_formal.vhdl tb_dsp_formal.vhdl tb_dsp_formal_inv.psl -e tb_dsp_formal
+bmc_nouf:       select -assert-count 2 tb_dsp_formal/t:$assert
+bmc_tbuf:       select -assert-count 1 tb_dsp_formal/t:$assert
+bmc_uf:         select -assert-count 1 tb_dsp_formal/t:$assert
+prove_nouf:     select -assert-count 6 tb_dsp_formal/t:$assert
+prove_uf:       select -assert-count 5 tb_dsp_formal/t:$assert
+# Task groups:
+#   nouf:     UF_MODE=false, the whole model interpreted (comparison run).
+#   tbuf:     the testbench's stim_f/out_f are UFs (marked in tb_dsp_formal.vhdl).
+#   uf:       in addition the DUT's $mul is a UF (mul16).
+# bmc_tbuf (tbuf without uf) is the only task in which the DUT datapath is
+# interpreted and its data comes from the testbench UFs: its PASS does not depend
+# on the semantics of the multiplication (slow, see
+# test_vhdl_control_independence_setattr.py).
+# nouf: the testbench marks are in VHDL, and UF_MODE=false switches them
+# off (uf_disable = not UF_MODE): the marks stay in RTLIL, but write_smt2
+# exports the boxes interpreted. sby does not remove marks.
+# Abstraction from the tool side: the DUT source code stays untouched.
+# Only the DUT's internal datapath: it cannot be marked with a VHDL attribute,
+# because the $mul cell is created only during synthesis and has no VHDL name.
+# The testbench's own UFs are marked in tb_dsp_formal.vhdl.
+# No new yosys command is needed: setattr sets the same RTLIL attribute.
+# The selection is restricted to the DUT module: plain t:$mul would also hit
+# the testbench multiplications (tb_stim/tb_out), one of which is 19 bits wide
+# -> signature conflict. All DUT instances (a, b and, in the prove tasks, the
+# vunit's c) share the same $mul cell.
+uf: setattr -set uf_instance "mul16" dsp_Brtl/t:$mul
+# keep on the cell: opt_clean does not remove the cell, and opt_merge does not
+# merge it with ANOTHER keep cell. An identical non-keep cell is still merged
+# into the keep cell (opt_merge.cc:342), and wreduce does not look at the cell's
+# keep at all (it narrows Y, and removes the cell if Y is entirely unused).
+# See tests/mark_preservation.
+uf: setattr -set keep 1 dsp_Brtl/t:$mul
+prep -top tb_dsp_formal
+# Guards: a lost or duplicated mark fails the run if it happens during this
+# [script] section (ghdl, prep). The guards do NOT see sby's own later model
+# build (design_prep.ys: opt_clean, opt -fast without -keepdc), where e.g.
+# opt_expr rewrites a $mul with a constant factor (one-hot -> shift,
+# *-1 -> $neg) regardless of keep. The final model is checked by pytest
+# (test_vhdl_control_independence_setattr.py). All DUT instances share
+# dsp_Brtl, so there is one $mul cell.
+uf: select -assert-count 1 a:uf_instance=mul16
+# prove_uf: the vunit adds one stim_f and one out_f cell (index j).
+bmc_tbuf: select -assert-count 2 tb_dsp_formal/a:uf_instance=stim_f
+bmc_tbuf: select -assert-count 2 tb_dsp_formal/a:uf_instance=out_f
+bmc_uf:   select -assert-count 2 tb_dsp_formal/a:uf_instance=stim_f
+bmc_uf:   select -assert-count 2 tb_dsp_formal/a:uf_instance=out_f
+prove_uf: select -assert-count 3 tb_dsp_formal/a:uf_instance=stim_f
+prove_uf: select -assert-count 3 tb_dsp_formal/a:uf_instance=out_f
+# UF_MODE is visible in the marks: GHDL computes the uf_disable value (a 1-bit
+# constant) from the generic. tbuf/uf: all marks on (1'0); nouf: the same
+# marks in place and all switched off (1'1). The DUT's $mul is marked only in
+# the uf group, so the marks of the nouf group are the testbench's.
+tbuf:           select -assert-none a:uf_disable=1'1
+bmc_tbuf:       select -assert-count 4 tb_dsp_formal/a:uf_disable=1'0
+bmc_uf:         select -assert-count 4 tb_dsp_formal/a:uf_disable=1'0
+prove_uf:       select -assert-count 6 tb_dsp_formal/a:uf_disable=1'0
+bmc_nouf:       select -assert-count 4 tb_dsp_formal/a:uf_instance
+bmc_nouf:       select -assert-count 4 tb_dsp_formal/a:uf_disable=1'1
+prove_nouf:     select -assert-count 6 tb_dsp_formal/a:uf_instance
+prove_nouf:     select -assert-count 6 tb_dsp_formal/a:uf_disable=1'1
+nouf:           select -assert-none a:uf_instance a:uf_disable=1'1 %d
+
+[files]
+dsp.vhdl
+tb_stim_formal.vhdl
+tb_out_formal.vhdl
+tb_dsp_formal.vhdl
+tb_dsp_formal_inv.psl

@@ -1,0 +1,27 @@
+[submodule "ext/ghdl"]
+	path = ext/ghdl
+	url = https://github.com/ghdl/ghdl.git
+[submodule "ext/ghdl-yosys-plugin"]
+	path = ext/ghdl-yosys-plugin
+	url = https://github.com/Topi-ab/ghdl-yosys-plugin.git
+[submodule "ext/sby"]
+	path = ext/sby
+	url = https://github.com/YosysHQ/sby.git
+[submodule "ext/yices2"]
+	path = ext/yices2
+	url = https://github.com/SRI-CSL/yices2.git
+[submodule "ext/yosys"]
+	path = ext/yosys
+	url = https://github.com/Topi-ab/yosys.git
+[submodule "ext/z3"]
+	path = ext/z3
+	url = https://github.com/Z3Prover/z3.git
+[submodule "ext/bitwuzla"]
+	path = ext/bitwuzla
+	url = https://github.com/bitwuzla/bitwuzla.git
+[submodule "ext/boolector"]
+	path = ext/boolector
+	url = https://github.com/Boolector/boolector.git
+[submodule "ext/cvc5"]
+	path = ext/cvc5
+	url = https://github.com/cvc5/cvc5.git

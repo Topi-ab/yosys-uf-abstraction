@@ -1,0 +1,176 @@
+# Pipelined complex FIR (fir_complex_pipe.vhdl): two properties in two
+# handshake styles.
+#   data_*: data does not depend on control (tb_fir_pipe_data_formal.vhdl, channels A/B).
+#   ctrl_*: control does not depend on data (tb_fir_pipe_ctrl_formal.vhdl, instances C/D).
+#   *_comb: SKID = false (combinational ready chain), *_skid: SKID = true.
+# Default parameters TAPS=5, WIDTH=8; test_vhdl_fir_pipeline.py replaces, in a
+# copy, the generic overrides of the ghdl lines (-gTAPS, -gWIDTH), the
+# TAPS-dependent guard counts and the depths.
+[tasks]
+data_bmc_comb        data uf   dpu_c dplain bmc_d
+data_bmc_skid        data uf   dpu_s dplain bmc_d
+data_bmc_nouf_comb   data nouf dpc_c dplain bmc_dc
+data_bmc_nouf_skid   data nouf dpc_s dplain bmc_dc
+data_prove_comb      data uf   diu_c dinv prove_d
+data_prove_skid      data uf   diu_s dinv prove_d
+ctrl_bmc_uf_comb     ctrl uf   cp_c cpu_c bmc_c
+ctrl_bmc_uf_skid     ctrl uf   cp_s cpu_s bmc_c
+ctrl_bmc_nouf_comb   ctrl nouf cp_c cpc_c bmc_c
+ctrl_bmc_nouf_skid   ctrl nouf cp_s cpc_s bmc_c
+ctrl_prove_uf_comb   ctrl uf   ci_c ciu_c cinv prove_c
+ctrl_prove_uf_skid   ctrl uf   ci_s ciu_s cinv prove_c
+ctrl_prove_nouf_comb ctrl nouf ci_c cic_c cinv prove_c
+ctrl_prove_nouf_skid ctrl nouf ci_s cic_s cinv prove_c
+
+[options]
+# data_bmc: depth 2*D+6 (D = clog2(TAPS)+2; TAPS=5: 16). The vacuity cover (both
+# channels have transferred D+2 beats, B has stalled on both sides) is reached
+# at step 2*D+4, within the horizon.
+bmc_d:   mode bmc
+bmc_d:   depth 16
+# data_bmc_nouf: all marks switched off (UF_MODE = false, non-UF comparison
+# run), the same depth as data_bmc (speed comparison at the same depth).
+bmc_dc:  mode bmc
+bmc_dc:  depth 16
+# data_prove: k-induction with auxiliary invariants (fir_complex_pipe_inv.psl
+# and tb_fir_pipe_data_formal_inv.psl).
+prove_d: mode prove
+prove_d: depth 3
+bmc_c:   mode bmc
+bmc_c:   depth 20
+# ctrl_prove: auxiliary invariant tb_fir_pipe_ctrl_formal_inv.psl.
+prove_c: mode prove
+prove_c: depth 2
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+plugin -i ghdl
+# Sources (tags): d = data, c = ctrl; p = without invariants, i = with the
+# vunits; u/c = UF_MODE true/false; _c/_s = SKID false/true. UF_MODE (a
+# testbench generic that the testbench passes on to the DUT) selects UF or
+# non-UF: the DUT's marks have uf_disable = not UF_MODE, so sby only sets the
+# value and does not remove marks.
+dpu_c: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=false -gUF_MODE=true fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_stim_formal.vhdl tb_fir_pipe_out_formal.vhdl tb_fir_pipe_data_formal.vhdl -e tb_fir_pipe_data_formal
+dpu_s: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=true -gUF_MODE=true fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_stim_formal.vhdl tb_fir_pipe_out_formal.vhdl tb_fir_pipe_data_formal.vhdl -e tb_fir_pipe_data_formal
+dpc_c: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=false -gUF_MODE=false fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_stim_formal.vhdl tb_fir_pipe_out_formal.vhdl tb_fir_pipe_data_formal.vhdl -e tb_fir_pipe_data_formal
+dpc_s: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=true -gUF_MODE=false fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_stim_formal.vhdl tb_fir_pipe_out_formal.vhdl tb_fir_pipe_data_formal.vhdl -e tb_fir_pipe_data_formal
+diu_c: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=false -gUF_MODE=true fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl fir_pipe_ref.vhdl tb_fir_pipe_stim_formal.vhdl tb_fir_pipe_out_formal.vhdl tb_fir_pipe_data_formal.vhdl fir_complex_pipe_inv.psl tb_fir_pipe_data_formal_inv.psl -e tb_fir_pipe_data_formal
+diu_s: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=true -gUF_MODE=true fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl fir_pipe_ref.vhdl tb_fir_pipe_stim_formal.vhdl tb_fir_pipe_out_formal.vhdl tb_fir_pipe_data_formal.vhdl fir_complex_pipe_inv.psl tb_fir_pipe_data_formal_inv.psl -e tb_fir_pipe_data_formal
+cpu_c: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=false -gUF_MODE=true fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_ctrl_formal.vhdl -e tb_fir_pipe_ctrl_formal
+cpu_s: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=true -gUF_MODE=true fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_ctrl_formal.vhdl -e tb_fir_pipe_ctrl_formal
+cpc_c: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=false -gUF_MODE=false fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_ctrl_formal.vhdl -e tb_fir_pipe_ctrl_formal
+cpc_s: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=true -gUF_MODE=false fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_ctrl_formal.vhdl -e tb_fir_pipe_ctrl_formal
+ciu_c: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=false -gUF_MODE=true fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_ctrl_formal.vhdl tb_fir_pipe_ctrl_formal_inv.psl -e tb_fir_pipe_ctrl_formal
+ciu_s: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=true -gUF_MODE=true fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_ctrl_formal.vhdl tb_fir_pipe_ctrl_formal_inv.psl -e tb_fir_pipe_ctrl_formal
+cic_c: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=false -gUF_MODE=false fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_ctrl_formal.vhdl tb_fir_pipe_ctrl_formal_inv.psl -e tb_fir_pipe_ctrl_formal
+cic_s: ghdl --std=08 -gTAPS=5 -gWIDTH=8 -gSKID=true -gUF_MODE=false fir_complex_pipe_pkg.vhdl cmul.vhdl cadd.vhdl fir_complex_pipe.vhdl tb_fir_pipe_ctrl_formal.vhdl tb_fir_pipe_ctrl_formal_inv.psl -e tb_fir_pipe_ctrl_formal
+# Guards: of the vunits bound to the same entity the ghdl plugin applies only
+# the one analysed last (the others disappear silently), so the number of
+# assertions is checked. Data: a_match, a_m_stable_b, a_prog_m_b and
+# a_prog_s_b (UF_MODE = false: also a_define_chk and a_tab_range_chk; prove:
+# also the 11 invariants of the testbench vunit).
+dpu_c: select -assert-count 4 tb_fir_pipe_data_formal/t:$assert
+dpu_s: select -assert-count 4 tb_fir_pipe_data_formal/t:$assert
+dpc_c: select -assert-count 6 tb_fir_pipe_data_formal/t:$assert
+dpc_s: select -assert-count 6 tb_fir_pipe_data_formal/t:$assert
+diu_c: select -assert-count 15 tb_fir_pipe_data_formal/t:$assert
+diu_s: select -assert-count 15 tb_fir_pipe_data_formal/t:$assert
+dinv:  select -assert-count 3 fir_complex_pipe_Brtl_*/t:$assert
+cp_c:  select -assert-count 2 tb_fir_pipe_ctrl_formal/t:$assert
+cp_s:  select -assert-count 2 tb_fir_pipe_ctrl_formal/t:$assert
+ci_c:  select -assert-count 3 tb_fir_pipe_ctrl_formal/t:$assert
+ci_s:  select -assert-count 3 tb_fir_pipe_ctrl_formal/t:$assert
+# Marks in VHDL (all tasks). The DUT instances share one module (its name
+# contains a hash of the generics), so the DUT module has TAPS cmul cells and
+# TAPS-1 cadd cells.
+select -assert-count 5 fir_complex_pipe_Brtl_*/a:uf_instance=cmul
+select -assert-count 4 fir_complex_pipe_Brtl_*/a:uf_instance=cadd
+# UF_MODE = true: stim_f and out_f twice each; UF_MODE = false: no instances.
+dpu_c: select -assert-count 2 tb_fir_pipe_data_formal/a:uf_instance=stim_f
+dpu_s: select -assert-count 2 tb_fir_pipe_data_formal/a:uf_instance=stim_f
+dpu_c: select -assert-count 2 tb_fir_pipe_data_formal/a:uf_instance=out_f
+dpu_s: select -assert-count 2 tb_fir_pipe_data_formal/a:uf_instance=out_f
+dpc_c: select -assert-none tb_fir_pipe_data_formal/a:uf_instance
+dpc_s: select -assert-none tb_fir_pipe_data_formal/a:uf_instance
+# dinv: the vunits add 2*H+TAPS stim_f cells and one out_f cell to the
+# testbench (H = hist_len(TAPS) = 2*D+TAPS-1, TAPS=5: 14) and the fir_pipe_ref
+# module (TAPS cmul, TAPS-1 cadd), used by the DUT vunit (slots) and the
+# testbench vunit (beat j).
+dinv:  select -assert-count 35 tb_fir_pipe_data_formal/a:uf_instance=stim_f
+dinv:  select -assert-count 3 tb_fir_pipe_data_formal/a:uf_instance=out_f
+dinv:  select -assert-count 5 fir_pipe_ref_Brtl_*/a:uf_instance=cmul
+dinv:  select -assert-count 4 fir_pipe_ref_Brtl_*/a:uf_instance=cadd
+# dinv: observations from inside the DUT. The ghdl plugin does not support
+# VHDL-2008 external names, so the obs_* signals of the testbench vunit
+# (anyseq placeholders) are connected here: the $anyseq cells of the
+# placeholders are deleted, the DUT's mn_v and (SKID) sk_v and the
+# live/hist_re/hist_im of the DUT vunit are exposed as outputs (expose), and
+# the new ports of the instances are connected to the obs_* wires
+# (connect -port). The source code is not touched.
+diu_c: select -assert-count 8 tb_fir_pipe_data_formal/t:$anyseq
+diu_s: select -assert-count 10 tb_fir_pipe_data_formal/t:$anyseq
+dinv:  delete tb_fir_pipe_data_formal/t:$anyseq
+dinv:  expose fir_complex_pipe_Brtl_*/w:mn_v fir_complex_pipe_Brtl_*/w:fir_complex_pipe_inv.live fir_complex_pipe_Brtl_*/w:fir_complex_pipe_inv.hist_re fir_complex_pipe_Brtl_*/w:fir_complex_pipe_inv.hist_im
+diu_s: expose fir_complex_pipe_Brtl_*/w:sk_v
+dinv:  cd tb_fir_pipe_data_formal
+dinv:  connect -port a mn_v tb_fir_pipe_data_formal_inv.obs_mv_a
+dinv:  connect -port b mn_v tb_fir_pipe_data_formal_inv.obs_mv_b
+dinv:  connect -port a fir_complex_pipe_inv.live tb_fir_pipe_data_formal_inv.obs_live_a
+dinv:  connect -port b fir_complex_pipe_inv.live tb_fir_pipe_data_formal_inv.obs_live_b
+dinv:  connect -port a fir_complex_pipe_inv.hist_re tb_fir_pipe_data_formal_inv.obs_hr_a
+dinv:  connect -port a fir_complex_pipe_inv.hist_im tb_fir_pipe_data_formal_inv.obs_hi_a
+dinv:  connect -port b fir_complex_pipe_inv.hist_re tb_fir_pipe_data_formal_inv.obs_hr_b
+dinv:  connect -port b fir_complex_pipe_inv.hist_im tb_fir_pipe_data_formal_inv.obs_hi_b
+diu_s: connect -port a sk_v tb_fir_pipe_data_formal_inv.g_sv.obs_sv_a
+diu_s: connect -port b sk_v tb_fir_pipe_data_formal_inv.g_sv.obs_sv_b
+dinv:  cd ..
+# cinv: the same technique for the ctrl vunit (the valid vectors of C and D).
+ci_c:  select -assert-count 2 tb_fir_pipe_ctrl_formal/t:$anyseq
+ci_s:  select -assert-count 4 tb_fir_pipe_ctrl_formal/t:$anyseq
+cinv:  delete tb_fir_pipe_ctrl_formal/t:$anyseq
+cinv:  expose fir_complex_pipe_Brtl_*/w:mn_v
+ci_s:  expose fir_complex_pipe_Brtl_*/w:sk_v
+cinv:  cd tb_fir_pipe_ctrl_formal
+cinv:  connect -port c mn_v tb_fir_pipe_ctrl_formal_inv.obs_mv_c
+cinv:  connect -port d mn_v tb_fir_pipe_ctrl_formal_inv.obs_mv_d
+ci_s:  connect -port c sk_v tb_fir_pipe_ctrl_formal_inv.g_sv.obs_sv_c
+ci_s:  connect -port d sk_v tb_fir_pipe_ctrl_formal_inv.g_sv.obs_sv_d
+cinv:  cd ..
+ctrl:  select -assert-none tb_fir_pipe_ctrl_formal/a:uf_instance
+# Task groups:
+#   uf:   the DUT's multipliers (cmul) and adders (cadd) and the testbench's
+#         stim_f and out_f are UFs (marked in VHDL).
+#   nouf: UF_MODE = false: the DUT's marks are in place but switched off
+#         (non-UF comparison run). The data testbench then uses a free
+#         stimulus table and an interpreted FIR reference, and a_define is an
+#         assertion (a_define_chk).
+data:  prep -top tb_fir_pipe_data_formal
+ctrl:  prep -top tb_fir_pipe_ctrl_formal
+# Guards after prep: a lost mark fails the run if it happens during this
+# section. pytest checks the final model (design_prep.ys).
+select -assert-count 5 fir_complex_pipe_Brtl_*/a:uf_instance=cmul
+select -assert-count 4 fir_complex_pipe_Brtl_*/a:uf_instance=cadd
+# UF_MODE shows in the DUT's marks (GHDL: a 1-bit constant, 1'0 = on,
+# 1'1 = off). nouf: all marks belong to the DUT and are switched off.
+uf:    select -assert-count 9 fir_complex_pipe_Brtl_*/a:uf_disable=1'0
+uf:    select -assert-none */a:uf_disable=1'1
+nouf:  select -assert-count 9 fir_complex_pipe_Brtl_*/a:uf_disable=1'1
+nouf:  select -assert-none */a:uf_instance */a:uf_disable=1'1 %d
+dinv:  select -assert-none tb_fir_pipe_data_formal/t:$anyseq
+cinv:  select -assert-none tb_fir_pipe_ctrl_formal/t:$anyseq
+
+[files]
+fir_complex_pipe_pkg.vhdl
+cmul.vhdl
+cadd.vhdl
+fir_complex_pipe.vhdl
+fir_pipe_ref.vhdl
+tb_fir_pipe_stim_formal.vhdl
+tb_fir_pipe_out_formal.vhdl
+tb_fir_pipe_data_formal.vhdl
+tb_fir_pipe_ctrl_formal.vhdl
+fir_complex_pipe_inv.psl
+tb_fir_pipe_data_formal_inv.psl
+tb_fir_pipe_ctrl_formal_inv.psl

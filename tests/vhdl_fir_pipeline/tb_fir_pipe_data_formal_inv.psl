@@ -1,0 +1,291 @@
+-- Cross-channel auxiliary invariants for the k-induction of the data
+-- property (data_prove tasks). The actual assertions (a_match, a_m_stable_b)
+-- are in the testbench; the DUT-internal invariants (for every instance) are
+-- in the vunit fir_complex_pipe_inv.psl. This vunit is bound to the testbench
+-- architecture: one vunit per bound entity.
+--
+-- The invariants are assertions: they are proven themselves (basecase +
+-- induction), so a wrong invariant fails and cannot produce a false PASS.
+--
+-- Observations from inside the DUT (obs_*): the ghdl-yosys-plugin does not
+-- support VHDL-2008 external names, and a vunit bound to the DUT does not see
+-- the testbench. Therefore obs_* are only anyseq placeholders in VHDL
+-- (without a driver GHDL would replace them with a constant and no wire would
+-- exist): fir_complex_pipe.sby (tag dinv) deletes their $anyseq cells,
+-- exposes the DUT's mn_v and (SKID) sk_v and the ghost state
+-- live/hist_re/hist_im of the DUT vunit as outputs (expose) and connects the
+-- new ports of instances a and b to these wires (connect -port). A wrong
+-- connection or bit order would fail the basecase of the invariants.
+--
+-- Bit order (GHDL): element 0 of an array (0 to N-1) is in the most
+-- significant bits; obs_mv/obs_sv are declared the same way (0 to D-1), so
+-- element i corresponds to the DUT's mn_v(i). Element k of the history is in
+-- bits (H-k)*WIDTH-1 downto (H-1-k)*WIDTH.
+vunit tb_fir_pipe_data_formal_inv(tb_fir_pipe_data_formal(formal)) {
+    -- D (pipe_depth) is declared in the testbench.
+    constant H  : positive := hist_len(TAPS);
+    constant HW : positive := H * WIDTH;
+    constant SW : positive := D * TAPS * OW;
+
+    -- Observations of the DUT instances (driven by yosys, see the top).
+    signal obs_mv_a, obs_mv_b     : std_logic_vector(0 to D - 1);
+    signal obs_live_a, obs_live_b : std_logic;
+    signal obs_hr_a, obs_hi_a     : std_logic_vector(HW - 1 downto 0);
+    signal obs_hr_b, obs_hi_b     : std_logic_vector(HW - 1 downto 0);
+    attribute anyseq : boolean;
+    attribute anyseq of obs_mv_a   : signal is true;
+    attribute anyseq of obs_mv_b   : signal is true;
+    attribute anyseq of obs_live_a : signal is true;
+    attribute anyseq of obs_live_b : signal is true;
+    attribute anyseq of obs_hr_a   : signal is true;
+    attribute anyseq of obs_hi_a   : signal is true;
+    attribute anyseq of obs_hr_b   : signal is true;
+    attribute anyseq of obs_hi_b   : signal is true;
+    -- Valid of the skid slots (SKID = false: zeros, the DUT has no such wire).
+    signal sv_a, sv_b             : std_logic_vector(0 to D - 1);
+
+    -- Expected history: element k = stim_f(icnt - 1 - k), or 0 when icnt <= k.
+    signal exp_hr_a, exp_hi_a     : std_logic_vector(HW - 1 downto 0);
+    signal exp_hr_b, exp_hi_b     : std_logic_vector(HW - 1 downto 0);
+
+    -- pre(i) = number of valid slots in stages < i; icnt - pre(i) beats have
+    -- reached stage i (or gone past it), and pre(D) is the number of beats in
+    -- flight.
+    type cnt_t is array (0 to D) of unsigned(15 downto 0);
+    signal pre_a, pre_b           : cnt_t;
+    signal full_ok                : std_logic;
+    signal ent_ok                 : std_logic;
+    -- Invariants of the progress counters (inv_prog_m, inv_prog_s).
+    signal prog_m_ok              : std_logic;
+    signal prog_s_ok              : std_logic;
+
+    -- A has transferred beat j since reset, i.e. a_define has tied out_f(j).
+    signal def_a : std_logic := '0';
+
+    -- Reference value of beat j: fir_pipe_ref of the window x[j-k] (x[m] =
+    -- stim_f(m) or 0 when m < 0), the output stage element. The same UF
+    -- symbols as in the DUT.
+    signal xj_re, xj_im       : signed(TAPS * WIDTH - 1 downto 0);
+    signal refst_re, refst_im : signed(SW - 1 downto 0);
+    signal refj_re, refj_im   : signed(OW - 1 downto 0);
+    signal ufj_re, ufj_im     : signed(OW - 1 downto 0);
+
+    attribute uf_instance of u_out_j : label is "out_f";
+
+    g_sv : if SKID generate
+        signal obs_sv_a, obs_sv_b : std_logic_vector(0 to D - 1);
+        attribute anyseq of obs_sv_a : signal is true;
+        attribute anyseq of obs_sv_b : signal is true;
+    begin
+        sv_a <= obs_sv_a;
+        sv_b <= obs_sv_b;
+    end generate;
+
+    g_nsv : if not SKID generate
+        sv_a <= (others => '0');
+        sv_b <= (others => '0');
+    end generate;
+
+    gen_h : for k in 0 to H - 1 generate
+        signal idx_a, idx_b : unsigned(15 downto 0);
+        signal sa_re, sa_im : signed(WIDTH - 1 downto 0);
+        signal sb_re, sb_im : signed(WIDTH - 1 downto 0);
+        attribute uf_instance of u_stim_h_a : label is "stim_f";
+        attribute uf_instance of u_stim_h_b : label is "stim_f";
+    begin
+        idx_a <= icnt_a - 1 - k;
+        idx_b <= icnt_b - 1 - k;
+
+        u_stim_h_a : entity work.tb_fir_pipe_stim_formal
+            generic map (
+                WIDTH => WIDTH
+            )
+            port map (
+                idx_in => idx_a,
+                re_out => sa_re,
+                im_out => sa_im
+            );
+
+        u_stim_h_b : entity work.tb_fir_pipe_stim_formal
+            generic map (
+                WIDTH => WIDTH
+            )
+            port map (
+                idx_in => idx_b,
+                re_out => sb_re,
+                im_out => sb_im
+            );
+
+        exp_hr_a((H - k) * WIDTH - 1 downto (H - 1 - k) * WIDTH) <=
+            std_logic_vector(sa_re) when icnt_a > k else (others => '0');
+        exp_hi_a((H - k) * WIDTH - 1 downto (H - 1 - k) * WIDTH) <=
+            std_logic_vector(sa_im) when icnt_a > k else (others => '0');
+        exp_hr_b((H - k) * WIDTH - 1 downto (H - 1 - k) * WIDTH) <=
+            std_logic_vector(sb_re) when icnt_b > k else (others => '0');
+        exp_hi_b((H - k) * WIDTH - 1 downto (H - 1 - k) * WIDTH) <=
+            std_logic_vector(sb_im) when icnt_b > k else (others => '0');
+    end generate;
+
+    gen_ref : for k in 0 to TAPS - 1 generate
+        signal idx        : unsigned(15 downto 0);
+        signal s_re, s_im : signed(WIDTH - 1 downto 0);
+        attribute uf_instance of u_stim_j : label is "stim_f";
+    begin
+        idx <= j - k;
+
+        u_stim_j : entity work.tb_fir_pipe_stim_formal
+            generic map (
+                WIDTH => WIDTH
+            )
+            port map (
+                idx_in => idx,
+                re_out => s_re,
+                im_out => s_im
+            );
+
+        xj_re((k + 1) * WIDTH - 1 downto k * WIDTH) <= s_re when j >= k else (others => '0');
+        xj_im((k + 1) * WIDTH - 1 downto k * WIDTH) <= s_im when j >= k else (others => '0');
+    end generate;
+
+    u_ref_j : entity work.fir_pipe_ref
+        generic map (
+            TAPS  => TAPS,
+            WIDTH => WIDTH
+        )
+        port map (
+            w_re_in   => xj_re,
+            w_im_in   => xj_im,
+            st_re_out => refst_re,
+            st_im_out => refst_im
+        );
+
+    refj_re <= refst_re(((D - 1) * TAPS + 1) * OW - 1 downto (D - 1) * TAPS * OW);
+    refj_im <= refst_im(((D - 1) * TAPS + 1) * OW - 1 downto (D - 1) * TAPS * OW);
+
+    u_out_j : entity work.tb_fir_pipe_out_formal
+        generic map (
+            TAPS  => TAPS,
+            WIDTH => WIDTH
+        )
+        port map (
+            idx_in => j,
+            re_out => ufj_re,
+            im_out => ufj_im
+        );
+
+    process (all) is
+        variable na, nb : unsigned(15 downto 0);
+        variable fo, eo : std_logic;
+    begin
+        na := (others => '0');
+        nb := (others => '0');
+        fo := '1';
+        eo := '1';
+        for i in 0 to D - 1 loop
+            pre_a(i) <= na;
+            pre_b(i) <= nb;
+            if icnt_b - nb > icnt_a - na then
+                eo := '0';
+            end if;
+            if obs_mv_a(i) = '1' then na := na + 1; end if;
+            if sv_a(i) = '1' then na := na + 1; end if;
+            if obs_mv_b(i) = '1' then nb := nb + 1; end if;
+            if sv_b(i) = '1' then nb := nb + 1; end if;
+            -- A at full rate: stage i is full once more than i beats have
+            -- been accepted, and the skid slots are not used.
+            if (icnt_a > i and obs_mv_a(i) = '0') or (icnt_a <= i and obs_mv_a(i) = '1') then
+                fo := '0';
+            end if;
+            if sv_a(i) = '1' then
+                fo := '0';
+            end if;
+        end loop;
+        pre_a(D) <= na;
+        pre_b(D) <= nb;
+        if icnt_b - nb > icnt_a - na then
+            eo := '0';
+        end if;
+        full_ok <= fo;
+        ent_ok  <= eo;
+    end process;
+
+    -- prog_m_ok: cnt_m_b = c > 0 -> some main slot of B in a stage i >= c is
+    -- valid (the oldest beat has advanced one stage per counted cycle).
+    -- prog_s_ok: cnt_s_b = c -> the skid slots of B in stages i >= D-c are
+    -- empty (emptied from downstream, a skid slot does not fill again while
+    -- m_ready is up).
+    process (all) is
+        variable pm, ps : std_logic;
+    begin
+        pm := '0';
+        ps := '1';
+        if cnt_m_b = 0 then
+            pm := '1';
+        end if;
+        for i in 0 to D - 1 loop
+            if i >= cnt_m_b and obs_mv_b(i) = '1' then
+                pm := '1';
+            end if;
+            if i + cnt_s_b >= D and sv_b(i) = '1' then
+                ps := '0';
+            end if;
+        end loop;
+        prog_m_ok <= pm;
+        prog_s_ok <= ps;
+    end process;
+
+    process (clk_in) is
+    begin
+        if rising_edge(clk_in) then
+            if rst_in = '1' then
+                def_a <= '0';
+            elsif armed = '1' and m_xfer_a = '1' and ocnt_a = j then
+                def_a <= '1';
+            end if;
+        end if;
+    end process;
+
+    default clock is rising_edge(clk_in);
+
+    -- The invariants of the DUT vunit are active (reset seen) in both.
+    inv_live : assert always
+        (first = '0') -> (obs_live_a = '1' and obs_live_b = '1');
+
+    -- Counters vs. pipeline: icnt - ocnt = number of beats in flight.
+    inv_cnt_a : assert always
+        (first = '0') -> (icnt_a - ocnt_a = pre_a(D));
+    inv_cnt_b : assert always
+        (first = '0') -> (icnt_b - ocnt_b = pre_b(D));
+
+    -- Input history of the DUT = the last accepted stimulus samples.
+    inv_hist_a : assert always
+        (first = '0') -> (obs_hr_a = exp_hr_a and obs_hi_a = exp_hi_a);
+    inv_hist_b : assert always
+        (first = '0') -> (obs_hr_b = exp_hr_b and obs_hi_b = exp_hi_b);
+
+    -- A at full rate: the pipeline fills stage by stage, skid slots empty.
+    inv_a_full : assert always
+        (first = '0') -> (full_ok = '1');
+
+    -- B is not ahead of A in any stage: B has at most as many beats that have
+    -- reached stage i as A (i = 0: icnt_b <= icnt_a, i = D: ocnt_b <= ocnt_a).
+    inv_ent : assert always
+        (first = '0') -> (ent_ok = '1');
+
+    -- Before A has transferred j, A has not passed j.
+    inv_order : assert always
+        (first = '0' and def_a = '0') -> (ocnt_a <= j);
+
+    -- Tied output function at the symbolic index: once A has transferred j,
+    -- out_f(j) = the reference value.
+    inv_bound : assert always
+        (def_a = '1') -> (ufj_re = refj_re and ufj_im = refj_im);
+
+    -- Progress counters vs. the pipeline of B (a_prog_m_b, a_prog_s_b): the
+    -- counter value bounds where the oldest beat is (m) and which skid slots
+    -- are empty (s).
+    inv_prog_m : assert always
+        (first = '0') -> (prog_m_ok = '1');
+    inv_prog_s : assert always
+        (first = '0') -> (prog_s_ok = '1');
+}

@@ -1,0 +1,13 @@
+[options]
+mode bmc
+depth 3
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+read_verilog -formal -sv feedback.sv
+prep -top top
+
+[files]
+feedback.sv

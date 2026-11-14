@@ -1,0 +1,35 @@
+[tasks]
+unconn
+deep
+partial
+undriven_in
+bb
+bb_uf
+control
+nomark
+nomark_deep
+
+[options]
+mode bmc
+depth 3
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+unconn:      read_verilog -formal -sv -DUNCONN subfunc.sv
+deep:        read_verilog -formal -sv -DDEEP subfunc.sv
+partial:     read_verilog -formal -sv subfunc.sv
+undriven_in: read_verilog -formal -sv -DUNDRIVEN_IN subfunc.sv
+bb:          read_verilog -formal -sv -DBB subfunc.sv
+bb_uf:       read_verilog -formal -sv -DBB_UF subfunc.sv
+control:     read_verilog -formal -sv subfunc.sv
+nomark:      read_verilog -formal -sv -DUNCONN subfunc.sv
+nomark_deep: read_verilog -formal -sv -DDEEP subfunc.sv
+prep -top top
+partial: cd box; connect -port s \b a[3:0]; cd ..
+nomark: setattr -unset uf_instance top/*
+nomark_deep: setattr -unset uf_instance top/*
+
+[files]
+subfunc.sv

@@ -1,0 +1,182 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # The toolchain (GHDL, ghdl-yosys-plugin, Yosys, SymbiYosys, Yices, Z3, Bitwuzla) is a
+  # prebuilt image whose tag is a hash of everything that determines it
+  # (scripts/toolchain-hash.sh). This job only checks that the image exists; it builds the
+  # toolchain when the hash has no image yet.
+  toolchain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    outputs:
+      image: ${{ steps.tc.outputs.image }}
+      source: ${{ steps.result.outputs.source }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Toolchain image name
+        id: tc
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-toolchain:$(scripts/toolchain-hash.sh)"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "toolchain image: $image"
+
+      - name: Log in to the GitHub Container Registry
+        # Not possible for pull requests from forks; the image is then read anonymously.
+        continue-on-error: true
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Look for the image
+        id: look
+        env:
+          IMAGE: ${{ steps.tc.outputs.image }}
+        run: |
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "image exists"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "no image for this toolchain hash; building the toolchain"
+          fi
+
+      - name: Check out the submodules that are built
+        if: steps.look.outputs.found != 'true'
+        # cvc5 and boolector are not built by build.sh, so they are not fetched.
+        run: |
+          git submodule update --init --depth 1 --jobs 4 \
+            ext/ghdl ext/ghdl-yosys-plugin ext/sby ext/yices2 ext/yosys ext/z3 ext/bitwuzla
+          # Yosys has nested submodules (abc, slang, sv-elab, fmt, ...); all are needed.
+          git -C ext/yosys submodule update --init --recursive --depth 1 --jobs 8
+
+      - name: Restore ccache
+        if: steps.look.outputs.found != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ext/_ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('.gitmodules', 'docker/**', 'scripts/**') }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ hashFiles('.gitmodules', 'docker/**', 'scripts/**') }}-
+            ccache-${{ runner.os }}-
+
+      - name: Build toolchain and runtime image
+        if: steps.look.outputs.found != 'true'
+        run: ./build.sh all
+
+      - name: Save ccache
+        # Saved even when a later step fails, so the next build starts warm.
+        if: always() && steps.look.outputs.found != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ext/_ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('.gitmodules', 'docker/**', 'scripts/**') }}-${{ github.sha }}
+
+      - name: Publish the new image
+        id: publish
+        # Pushes to main and pull requests from this repository push it to the registry,
+        # so later runs with the same toolchain skip the build. Pull requests from forks
+        # cannot push; they pass the image to the test job as an artifact.
+        if: steps.look.outputs.found != 'true'
+        env:
+          IMAGE: ${{ steps.tc.outputs.image }}
+          CAN_PUSH: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          echo "FROM yosys-uf/toolchain:latest" | docker build -t "$IMAGE" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" -
+          if [ "$CAN_PUSH" = true ] && docker push "$IMAGE"; then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          else
+            docker save "$IMAGE" | gzip -1 > toolchain-image.tar.gz
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload the image for the test job
+        if: steps.publish.outputs.pushed == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: toolchain-image
+          path: toolchain-image.tar.gz
+          retention-days: 1
+
+      - name: Where the test job gets the image
+        id: result
+        run: |
+          if [ "${{ steps.publish.outputs.pushed }}" = false ]; then
+            echo "source=artifact" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=registry" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    needs: toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Log in to the GitHub Container Registry
+        continue-on-error: true
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download the image artifact
+        if: needs.toolchain.outputs.source == 'artifact'
+        uses: actions/download-artifact@v4
+        with:
+          name: toolchain-image
+
+      - name: Load the toolchain image
+        env:
+          IMAGE: ${{ needs.toolchain.outputs.image }}
+          SOURCE: ${{ needs.toolchain.outputs.source }}
+        run: |
+          if [ "$SOURCE" = artifact ]; then
+            gunzip -c toolchain-image.tar.gz | docker load
+          else
+            docker pull "$IMAGE"
+          fi
+          docker tag "$IMAGE" yosys-uf/toolchain:latest
+
+      - name: Show tool versions
+        run: |
+          ./tc.sh yosys -V
+          ./tc.sh ghdl --version | head -1
+          ./tc.sh bitwuzla --version
+          ./tc.sh yices-smt2 --version | head -1
+
+      - name: Run tests
+        # The default suite (everything except the slow and validation markers, see
+        # pytest.ini). tests/conftest.py starts the longest tests first.
+        timeout-minutes: 90
+        run: ./tc.sh pytest -n auto --junitxml=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results.xml
+          if-no-files-found: ignore

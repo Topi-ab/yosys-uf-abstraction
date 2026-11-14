@@ -1,0 +1,44 @@
+-- Auxiliary invariant for the k-induction of the control property
+-- (ctrl_prove tasks). The assertions (a_s_ready_eq, a_m_valid_eq) look only at
+-- the ports, but the control state of the pipeline is internal: one valid bit
+-- per stage and (SKID) one skid slot valid per stage. Without the invariant
+-- the internal valid bits of C and D can differ in the initial state of the
+-- induction, and the difference can stay hidden for arbitrarily long
+-- (m_ready = '0'), so no depth is enough.
+--
+-- The invariant compares two instances, so it is in a vunit bound to the
+-- testbench (a vunit bound to the DUT sees only one instance). The
+-- observations obs_* are anyseq placeholders that fir_complex_pipe.sby (tag
+-- cinv) connects to the DUT's mn_v and (SKID) sk_v (expose, connect -port),
+-- as in tb_fir_pipe_data_formal_inv.psl. The element order (0 to D-1) is the
+-- same as in the DUT.
+vunit tb_fir_pipe_ctrl_formal_inv(tb_fir_pipe_ctrl_formal(formal)) {
+    constant DEP : positive := pipe_depth(TAPS);
+
+    signal obs_mv_c, obs_mv_d : std_logic_vector(0 to DEP - 1);
+    attribute anyseq : boolean;
+    attribute anyseq of obs_mv_c : signal is true;
+    attribute anyseq of obs_mv_d : signal is true;
+    -- Valid of the skid slots (SKID = false: zeros, the DUT has no such wire).
+    signal sv_c, sv_d         : std_logic_vector(0 to DEP - 1);
+
+    g_sv : if SKID generate
+        signal obs_sv_c, obs_sv_d : std_logic_vector(0 to DEP - 1);
+        attribute anyseq of obs_sv_c : signal is true;
+        attribute anyseq of obs_sv_d : signal is true;
+    begin
+        sv_c <= obs_sv_c;
+        sv_d <= obs_sv_d;
+    end generate;
+
+    g_nsv : if not SKID generate
+        sv_c <= (others => '0');
+        sv_d <= (others => '0');
+    end generate;
+
+    default clock is rising_edge(clk_in);
+
+    -- The whole control state of C and D is the same.
+    inv_v_eq : assert always
+        (first = '0') -> (obs_mv_c = obs_mv_d and sv_c = sv_d);
+}

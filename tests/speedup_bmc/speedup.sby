@@ -1,0 +1,55 @@
+# Speed gain of the UF abstraction as a function of data width and BMC depth.
+# Width and depth come from environment variables (sby pycode preprocessing;
+# every pycode block runs in its own namespace, hence the import twice):
+#   SPEEDUP_WIDTH (default 8), SPEEDUP_DEPTH (default 12).
+# Tasks:
+#   uf / cover_uf:     testbench stim_f/out_f as UFs and the DUT $mul = mulw (UF).
+#   nouf / cover_nouf: testbench stim_f/out_f as UFs, the DUT multiplication
+#                      interpreted (the "traditional" model with symbolic data).
+[tasks]
+uf          bmc   ufdut
+nouf        bmc   noufdut
+cover_uf    cover ufdut
+cover_nouf  cover noufdut
+
+[options]
+bmc:   mode bmc
+cover: mode cover
+--pycode-begin--
+import os
+output("depth " + os.environ.get("SPEEDUP_DEPTH", "12"))
+--pycode-end--
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+plugin -i ghdl
+--pycode-begin--
+import os
+output("ghdl --std=08 -gWIDTH=" + os.environ.get("SPEEDUP_WIDTH", "8") + " dsp.vhdl tb_stim_formal.vhdl tb_out_formal.vhdl tb_dsp_formal.vhdl -e tb_dsp_formal")
+--pycode-end--
+bmc: chformal -cover -remove
+# The DUT $mul is marked from the tool side (as in
+# tests/vhdl_control_independence_setattr). The selection is limited to the DUT
+# module (its name depends on the generic, hence dsp*).
+# setattr is required here: the $mul is created by synthesis from an
+# expression and has no VHDL name, so the mark (or a uf_disable generic)
+# cannot be written in the source. The testbench marks are in the VHDL.
+ufdut: setattr -set uf_instance "mulw" dsp*/t:$mul
+ufdut: setattr -set keep 1 dsp*/t:$mul
+prep -top tb_dsp_formal
+ufdut: select -assert-count 1 a:uf_instance=mulw
+noufdut: select -assert-none a:uf_instance=mulw
+noufdut: select -assert-count 1 dsp*/t:$mul
+select -assert-count 2 tb_dsp_formal/a:uf_instance=stim_f
+select -assert-count 2 tb_dsp_formal/a:uf_instance=out_f
+select -assert-count 1 tb_dsp_formal/t:$assert
+bmc: select -assert-none tb_dsp_formal/t:$cover
+cover: select -assert-count 1 tb_dsp_formal/t:$cover
+
+[files]
+dsp.vhdl
+tb_stim_formal.vhdl
+tb_out_formal.vhdl
+tb_dsp_formal.vhdl
